@@ -1,0 +1,387 @@
+# arc-manifest.yaml — the software factory, as a package.
+#
+# WHAT ARC DOES WITH THIS FILE, EXACTLY
+# -------------------------------------
+# Nothing in this repo is code. This manifest IS the package. `arc install`
+# reads it, sees `type: factory`, and hands it to the reference-composition
+# path (arc: src/lib/composition.ts, src/commands/install.ts, arc#400), which:
+#
+#   1. validates the declarations below (`validateCompositionFields`);
+#   2. checks the `tools:` below against this host — BEFORE a byte is fetched;
+#   3. resolves EVERY `references[]` entry (shallow clone at the pinned tag,
+#      read its manifest) — all of them, before any of them installs;
+#   4. computes ONE combined capability surface, the union of the members',
+#      each line attributed to the member that asked for it, and asks once;
+#   5. installs the members in the order declared here.
+#
+# A failure at ANY point before step 5 lands nothing at all. That is the
+# honesty rule (`docs/design-factory-type.md` D2): a composition is one
+# decision, so one bad member aborts all of it.
+#
+# Verify this file with `arc validate .` — arc's strict validator, which is
+# stricter than the loader `arc install` uses.
+#
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# ADDRESSING: `repo:` URLs, NOT registry names — and why, and for how long
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Every member below is addressed by its public GitHub URL plus an exact
+# version, not by a registry `@scope/name`.
+#
+# THE REASON IS NOT PREFERENCE. Publishing to the live registry is HELD
+# (arc#366 "stock the shelf" owns it — principal's word; epic #1 stocktake).
+# Nothing in this composition is on the shelf, so a registry reference would
+# resolve to nothing today and the whole factory would refuse to install. arc
+# supports both addressing forms on the same footing: `references[]` accepts
+# `{ name, version }` for a registry member and `{ name, version, repo }` for
+# a git one (arc: src/lib/composition.ts validateReferences), and both go
+# through the identical resolve → review → install path.
+#
+# WHAT CHANGES WHEN #366 UNBLOCKS: delete each `repo:` line and rewrite each
+# `name:` to its registry scope (`@metafactory/cortex`, and so on). That is
+# the whole edit — mechanical, one line per member, no restructuring, no
+# semantic change to the composition. The pins do not move.
+#
+# WHAT `repo:` COSTS IN THE MEANTIME, stated plainly rather than buried: a git
+# member gets no SHA-256 checksum, no registry signature, and no Sigstore
+# verification — those live on the registry path only (arc: cli.ts install,
+# `fetchAndVerifyRegistryPackage`). What it DOES get: the pinned tag is used
+# only to FIND a commit, and the commit SHA is what travels to the install, so
+# a tag moved between review and landing cannot swap the bytes (arc:
+# `resolveRepoReference`, arc#400 review F2). Trust here is "a pinned commit
+# in a repo you can read", not "a signed release". That is a real difference
+# and it is the reason #366 exists.
+#
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# VERIFIED: all five members install, hermetically, 2026-09-02
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# `arc install` of this manifest into an isolated $HOME resolved all five
+# members, showed ONE combined review (47 capability lines, Risk: HIGH —
+# network ∧ write, with cortex's unrestricted bash infecting the whole
+# surface), landed every member at its exact pin, and recorded the composition
+# `status: complete`. The real $HOME was byte-identical before and after,
+# including the live launchd job table and the login keychain.
+#
+# TWO OF THESE PINS DID NOT RESOLVE WHEN THIS FILE WAS FIRST WRITTEN, and the
+# reasoning is kept because it is the reason the pins are what they are.
+# compass-core 0.6.0 and discord 0.5.0 were declared on their repos' `main`
+# but untagged, so both refused to resolve and the composition refused as a
+# whole, landing nothing. The tags were then cut (both releases dated
+# 2026-09-02) and the same manifest installed unchanged. The alternatives that
+# were rejected, and stay rejected:
+#
+#   * Pin compass-core to v0.4.3 (its newest tag at the time). REJECTED, and
+#     the primary reason is sufficient on its own: 0.4.3 predates the
+#     plan-breakdown skill the MVP exists to ship (compass-core#20/#22). The
+#     hermetic run confirms the call — 0.6.0 lands
+#     `~/.claude/skills/Governance` AND `~/.claude/skills/plan-breakdown`,
+#     which is the whole point of including compass-core at all.
+#
+#     There is a secondary hazard, stated precisely because an earlier draft
+#     of this comment overstated it. At 0.4.3 `provides.templates` was still
+#     LIVE, and arc renders templates for `type: governance` into the
+#     consumer's CWD, finishing with a bare `Bun.write` — no existence check,
+#     no prompt, no backup (arc: src/lib/rules.ts `generateSingleRule` step 8).
+#     But that write is only REACHED when the CWD already contains the
+#     template's declared config file (`compass.config.yaml`): step 1 reads it
+#     first and returns `Config file not found` without writing when it is
+#     absent. So the clobber is real for an operator installing from inside a
+#     compass-governed repo, and is a template ERROR — not a clobber — on a
+#     fresh machine or any other CWD. Narrower than "it overwrites your
+#     CLAUDE.md", still not something to ship inside a factory, and not needed
+#     to carry the rejection.
+#   * Pin discord to 0.1.0 (the version in epic #1's stocktake). That number
+#     came from a local install off an untagged `main` at an older commit; it
+#     is not a release and no tag carries it. 0.5.0 was what the repo declared,
+#     so cutting `v0.5.0` from `main` made this manifest correct with no edit.
+#   * Drop either from `references[]`. That silently ships a factory that is
+#     not the ratified factory.
+#
+# The general rule this leaves behind: when a member's release lags the
+# ratified pin, the pin stays ratified and the composition refuses loudly.
+# A refusal is a release gap in a member repo; a downgrade is a lie in this
+# file.
+
+schema: arc/v1
+
+# `name` and the repo name are INDEPENDENT AXES, ratified
+# (`docs/design-factory-type.md` D8, following E6's precedent). The repo is
+# `metafactory-factory-software` — the component-repo convention,
+# `metafactory-<kind>-<name>`, which is the shelf label. The package is
+# `software-factory`, which is what an operator types. `arc validate`'s §4.2
+# derivation rule does not fire here: it only applies to the
+# `metafactory-skill-` / `metafactory-bundle-` / `metafactory-<app>-<type>-`
+# grammars (arc: src/lib/repo-name.ts `toStrictName`), and this repo matches
+# none of them, so the two names are free to differ. That is by design, not by
+# luck — but it IS luck-adjacent, so it is written down.
+name: software-factory
+
+# Bare scope, not `@metafactory` — arc/v1 wants the sigil-free form and adds
+# the `@` at publish (arc: validate-manifest.ts `validateNamespace`, arc#369).
+# Declared now so that the eventual publish (HELD, arc#366) needs no edit; it
+# has no effect on install.
+namespace: metafactory
+
+version: 0.1.0
+type: factory
+description: >-
+  The software factory as one installable composition — cortex runtime, its
+  Discord surface, compass-core governance, and the narration and review
+  skills. Ships no code of its own: every member is a published package,
+  pinned to an exact version.
+
+# Backed by the LICENSE file in this repo. MIT is the ecosystem's licence for
+# packages that ship no code (compass-core, code-review and the discord bundle
+# are all MIT; cortex is AGPL-3.0-only precisely because it ships code, and
+# this package ships none — its members carry their own licences, which this
+# declaration does not and cannot override).
+license: MIT
+
+author:
+  name: Andreas Aastroem
+  github: mellanon
+
+repository: the-metafactory/metafactory-factory-software
+
+# DECLARED `community`, and arc will WARN that the members compute to
+# `custom`. Both halves are intended.
+#
+# D5: a composition's tier is the MIN of its members' — trust never averages
+# up. The members are cortex `community`, compass-core `official`, and
+# adapter-discord / discord / code-review `custom`, so the computed MIN is
+# `custom` and `arc install` prints:
+#
+#   arc: WARN — composition declares tier 'community' but its members compute
+#   to 'custom' … Trust never averages up; treat the composition as 'custom'.
+#
+# The declaration stays `community` because that is what issue #2 ratified for
+# the FACTORY, and because at publish the same arithmetic is an ERROR rather
+# than a warning (arc#402) — so this line is the honest record of the claim
+# being made, sitting next to the warning that corrects it. When the three
+# `custom` members are promoted, the warning stops on its own. Raising the
+# declaration to match the members, or lowering it to hide the warning, would
+# both delete information an operator should see.
+tier: community
+
+# `produces:` is the factory-only capability slug — what this composition
+# exists to make. It is the registry's discovery axis (D8) and the reason the
+# type is `factory` rather than `bundle`: a bundle is the plain
+# reference-composition; a factory adds the host-tool check and this
+# declaration (arc: src/lib/composition.ts `validateProduces`, D1).
+produces: software
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NO `capabilities:` BLOCK — its ABSENCE is the declaration
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# This is not an omission and it is not arc#240 being skirted. Declaring a
+# capability block on a `bundle` or `factory` is a VALIDATION ERROR (arc:
+# src/lib/composition.ts `validateNoOwnCapabilities`, arc#400 review S2; the
+# registry refuses the same shape, meta-factory PR #574 §8):
+#
+#   capabilities: must not be declared on a reference-composition — a
+#   composition ships no code, so its surface is the UNION of its members',
+#   computed at install and shown in one combined review.
+#
+# The reasoning, which is worth carrying: a factory that ALSO declared a block
+# would create two answers to "what can this do" — the one written here, which
+# a reader sees in the repo, and the computed one, which actually governs. The
+# gap between them is worth more as a refusal than as a nicety. arc#399 made
+# the block optional for compositions; arc#400 made declaring one an error.
+#
+# The real surface is computed at install from the members' own manifests and
+# shown ONCE, attributed line by line, with nothing summarised away (D2).
+# MEASURED on the 2026-09-02 hermetic run: 47 lines — 8 reads, 12 writes, 10
+# network hosts, 9 bash grants, 8 secrets — and `Risk: HIGH (combined)`.
+#
+# Two things in that review only a COMBINED one can tell you, and both are the
+# argument for this design:
+#
+#   * HIGH is a property of the UNION, not of any member. arc's rule is
+#     network ∧ write → high (arc: `combinedRisk`). No member is installed
+#     "as high risk"; the composition is, because one member reaches the
+#     network and another writes to disk.
+#   * `🔴 Bash: unrestricted [cortex] — one member with unrestricted bash makes
+#     the WHOLE composition unrestricted`. compass-core's and code-review's
+#     careful `gh pr *` / `git *` allowlists are still shown, and are still
+#     true of those packages, but they do not constrain the composition. An
+#     operator reading five separate installs could easily miss that.
+#
+# That is the true reading of what installing this factory does, and the point
+# of the single review is that an operator sees it in one place instead of five.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# tools: — host binaries, checked BEFORE anything is fetched
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Factory-only (D1). Checked first, before a single reference is resolved,
+# because a host missing `gh` is a fact knowable without touching the network
+# and an operator should learn it before arc spends bandwidth (arc:
+# `prepareComposition` step 2). Every miss is collected into ONE message; a
+# gate that reveals them one `arc install` at a time is a gate that gets
+# worked around.
+#
+# WHERE THE FLOORS COME FROM. The issue asks for floors "derived from cortex's
+# documented requirements", cortex being the runtime member every other member
+# sits on. Read at v6.13.3, cortex documents its external dependencies in
+# exactly one table — `docs/design-test-rig.md` §"Prerequisites (external
+# dependencies)" — corroborated by CONTRIBUTING.md §Prerequisites and
+# README-AGENTS.md §1. Reproduced in full, no rows elided:
+#
+#   | Tool           | Install method                  | Required by          |
+#   | macOS or Linux | OS                              | Everything           |
+#   | Git            | `brew install git` or apt       | Everything           |
+#   | Bun >= 1.1     | `curl -fsSL https://bun.sh/…`   | All CLI tools        |
+#   | Node.js >= 20  | `brew install node` or via Bun  | Claude Code          |
+#   | Claude Code    | `npm i -g @anthropic-ai/…`      | Grove hooks, sessions|
+#   | gh CLI         | `brew install gh`               | GitHub operations    |
+#
+# The table names floors for TWO tools — Bun and Node.js. Of the three tools
+# declared HERE, only `bun` is one of them; `git` and `gh` appear with no
+# version. (Node.js is not declared in this `tools:` block at all: it is
+# required by Claude Code, which is the operator's substrate choice, not
+# something this composition installs or drives.)
+#
+# So `git` and `gh` are declared WITHOUT a `version:` rather than with an
+# invented one. arc enforces a declared floor strictly when it can read the
+# binary's version (arc: `checkTools`), so a made-up number is not decoration
+# — it is a refusal arc would issue on a host that satisfies everything cortex
+# actually asks for. A false refusal on a security gate is how operators learn
+# to reach for `--yes`. If cortex later documents a git or gh floor, it belongs
+# here, cited the same way.
+tools:
+  - name: git
+    # No floor: cortex documents Git as required for "Everything" and names no
+    # version (docs/design-test-rig.md §Prerequisites, v6.13.3). Presence is
+    # also arc's own hard requirement on this path — every `repo:` member
+    # below is resolved and installed by `git clone`.
+    reason: >-
+      cloning every repo-addressed member (arc resolveRepoReference /
+      install), and compass-core's SOPs, which declare `git *` in their
+      restricted bash allowlist
+
+  - name: gh
+    # No floor: cortex documents "gh CLI — GitHub operations" and names no
+    # version (same table).
+    reason: >-
+      the review lane — the code-review skill declares `gh pr *` / `gh api *`
+      in its restricted bash allowlist, and compass-core's SOPs add `gh
+      issue|pr|repo|release|label *`; without gh the factory installs but the
+      dev loop cannot run
+
+  - name: bun
+    # Floor SOURCED: cortex docs/design-test-rig.md §"Prerequisites (external
+    # dependencies)" table row "Bun >= 1.1 … Required by: All CLI tools",
+    # read at tag v6.13.3. Written as a full semver so the range parser has
+    # three components to compare; `>=1.1` and `>=1.1.0` denote the same floor.
+    version: ">=1.1.0"
+    reason: >-
+      the runtime for cortex and every CLI in the composition — cortex
+      documents it as the ONLY supported runtime (README-AGENTS.md §1:
+      "Never use npm/yarn/node"), and arc runs `bun install` in each member's
+      install transaction
+
+# ─────────────────────────────────────────────────────────────────────────────
+# references[] — the five ratified MVP members, at EXACT pins
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# EXACT, never a range: D4 makes a range a validation error rather than a
+# style preference, at publish AND re-checked at install against the bytes
+# that actually resolved (arc: `isExactVersion`, and the manifest-version
+# equality check in `prepareComposition`). A floating member reintroduces the
+# integration project this type exists to delete. Every pin below was verified
+# twice: the tag exists on the remote, and the manifest AT that tag declares
+# the same version — the second check is the one arc itself repeats, and a
+# mismatch is a refusal.
+#
+# ORDER IS THE INSTALL ORDER, and it is the D8 table's order: runtime, then
+# its surface, then governance, then the two skills. It is not a dependency
+# graph — cortex declares its own `depends_on.packages` and arc resolves those
+# itself — but it is the order an operator would read the factory in, and the
+# order refusals will surface in.
+#
+# NO AGENT. Ratified (D8, epic #1 trap 4): the factory ships runtime +
+# governance + skills, and the agent is the operator's first choice on top —
+# "fresh machine → factory ready, agent one install away". luna-lite and the
+# rest of the optional tier are a follow-up after the MVP proves. Do not
+# helpfully add one.
+references:
+  # RUNTIME. The layer-7 collaboration surface everything else sits on.
+  # PIN CITED: release "Cortex v6.13.3 -- anchored CTX_REPO validation
+  # (defense-in-depth on the stand-up clone)", tagged v6.13.3, 2026-07-26.
+  # Tag verified on the remote; arc-manifest.yaml at v6.13.3 declares
+  # `version: "6.13.3"`, `type: component`, `tier: community`.
+  # NOTE: tag v6.13.4 also exists but carries no GitHub release — the pin
+  # follows the released version, not the newest tag.
+  - name: cortex
+    version: 6.13.3
+    repo: https://github.com/the-metafactory/cortex
+
+  # SURFACE. cortex's Discord adapter, loaded in-process by cortex's own
+  # plugin loader (ADR-0024); arc's job is to clone, `bun install`, and record
+  # it so the loader can find it via `arc list --json`.
+  # PIN CITED: release "v0.2.0 — createPrivateThread (cortex#2206)", tagged
+  # v0.2.0, 2026-07-17 — the repo's only release and only tag. Tag verified;
+  # arc-manifest.yaml at v0.2.0 declares `version: 0.2.0`, `tier: custom`.
+  - name: metafactory-cortex-adapter-discord
+    version: 0.2.0
+    repo: https://github.com/the-metafactory/metafactory-cortex-adapter-discord
+
+  # GOVERNANCE. Drops the governance + plan-breakdown skills and the
+  # governance subagent into ~/.claude via `provides.files`.
+  # PIN CITED: release "compass-core v0.6.0 — the process installs with the
+  # factory", tagged v0.6.0, 2026-09-02 —
+  # https://github.com/the-metafactory/compass-core/releases/tag/v0.6.0
+  # Tag verified on the remote at `main` HEAD 0e42b1e ("feat: ship the
+  # plan-breakdown skill front-end with the SOP it fronts (#20) (#22)");
+  # arc-manifest.yaml at v0.6.0 declares `version: 0.6.0`, `type: governance`,
+  # `tier: official`. Confirmed at install: lands the Governance AND
+  # plan-breakdown skills plus the governance subagent via provides.files.
+  # (This tag was cut in response to this manifest; the pin never moved. See
+  # the header for why v0.4.3 was refused as a substitute.)
+  #
+  # SECOND, SEPARATE ISSUE, recorded so it is not rediscovered: compass-core's
+  # manifest declares `name: "@the-metafactory/compass-core"`, a scoped string
+  # its own header marks as a KNOWN arc/v1 violation left deliberately unfixed
+  # (renaming orphans every install already on disk). arc records a member
+  # under ITS OWN manifest name, not this reference's label, so `arc list`
+  # will show `@the-metafactory/compass-core` while the ratified table and
+  # this file say `compass-core`. Harmless to the install — the label here is
+  # only a label for a `repo:` member — but it is why the two names differ.
+  - name: compass-core
+    version: 0.6.0
+    repo: https://github.com/the-metafactory/compass-core
+
+  # NARRATION SURFACE. The `discord` CLI + skills bundle extracted from cortex
+  # per ADR-0017 (the live adapter stays in cortex; this is the tooling).
+  # PIN CITED: release "discord bundle v0.5.0 — first release", tagged v0.5.0,
+  # 2026-09-02 — the repo's FIRST tag ever, at `main` HEAD:
+  # https://github.com/the-metafactory/metafactory-bundle-discord/releases/tag/v0.5.0
+  # Tag verified on the remote; arc-manifest.yaml at v0.5.0 declares
+  # `name: discord`, `version: 0.5.0`, `type: skill`, `tier: custom`.
+  # Confirmed at install: lands ~/bin/discord plus the Discord and FleetAdmit
+  # skills. Epic #1's stocktake records "discord skill (0.1.0)" — that was a
+  # LOCAL install off an untagged `main` at an older commit, not a release, and
+  # no tag carries it; 0.5.0 is the released version and the one pinned here.
+  #
+  # REPO RENAME, noted so a stale URL is not reintroduced: this repo was
+  # `metafactory-discord` (the URL every existing local install still records)
+  # and is now `metafactory-bundle-discord`. GitHub redirects the old name, but
+  # the canonical URL is the one written here.
+  - name: discord
+    version: 0.5.0
+    repo: https://github.com/the-metafactory/metafactory-bundle-discord
+
+  # THE REVIEW LANE. Multi-lens PR review skill.
+  # PIN CITED: release "code-review v0.4.2 — add jcfischer as co-author",
+  # tagged v0.4.2, 2026-05-17. Tag verified; arc-manifest.yaml at v0.4.2
+  # declares `name: code-review`, `version: 0.4.2`, `type: skill`,
+  # `tier: custom`.
+  # REPO RENAME: formerly `arc-skill-code-review` (the URL existing local
+  # installs record), now `metafactory-skill-code-review`. Canonical URL used.
+  - name: code-review
+    version: 0.4.2
+    repo: https://github.com/the-metafactory/metafactory-skill-code-review
