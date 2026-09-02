@@ -130,8 +130,10 @@ type: factory
 description: >-
   The software factory as one installable composition — cortex runtime, its
   Discord surface, compass-core governance, and the narration and review
-  skills. Ships no code of its own: every member is a published package,
-  pinned to an exact version.
+  skills. Ships no code of its own: the five declared members are pinned to
+  exact, release-verified versions. Their own dependency cascades are not
+  yet pinned or covered by the combined review (arc#410) — read the review
+  as the floor of what installs.
 
 # Backed by the LICENSE file in this repo. MIT is the ecosystem's licence for
 # packages that ship no code (compass-core, code-review and the discord bundle

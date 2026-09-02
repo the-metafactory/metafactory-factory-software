@@ -62,8 +62,9 @@ stock arc `main` at `7e3c17a`:
   file that cortex's manifest does not declare under `owns:` — and arc only
   purges what a package declares, so `untangle: CLEAN` is printed truthfully
   while all of it is still on disk. arc names this failure mode itself, as
-  arc#401 residual risk (c). That gap is the one thing standing between this
-  factory and the epic's Definition of Done.
+  arc#401 residual risk (c). Closing the strict Definition of Done takes two
+  named steps: cortex declaring those paths (cortex#2520 — 7 of the 39
+  surviving paths) and a ruling on the remaining classes ([#8](https://github.com/the-metafactory/metafactory-factory-software/issues/8)).
 
 Until [arc#412](https://github.com/the-metafactory/arc/issues/412) merged, the
 purge crashed part-way through this composition and left seven of the ten
