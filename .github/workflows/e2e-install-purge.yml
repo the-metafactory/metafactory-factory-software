@@ -60,10 +60,11 @@ name: E2E install → purge
 on:
   pull_request:
     branches: [main]
-  # Runs on the feature branch too, so the wiring can be verified before a PR
-  # exists rather than discovered to be broken by the PR that needs it.
+  # Runs on the working branch too, so the wiring can be verified before a PR
+  # exists rather than discovered to be broken by the PR that needs it — which
+  # is exactly how the guard-ordering bug reached main.
   push:
-    branches: [main, "feat/**"]
+    branches: [main, "feat/**", "fix/**"]
   workflow_dispatch:
     inputs:
       arc_ref:
@@ -77,12 +78,25 @@ on:
         default: false
 
 # Keyed on the HEAD SHA rather than the ref, so the push run and the
-# pull_request run for one commit collapse into a single macOS run instead of
+# pull_request run for ONE COMMIT collapse into a single macOS run instead of
 # two. `github.event.pull_request.head.sha` is empty on a push, where
 # `github.sha` is already the commit — the fallback covers both.
+#
+# Checked against the three events this workflow actually sees:
+#   push to fix/** or feat/**  → group keyed on the new commit; own group.
+#   pull_request for that same commit → head.sha is that same commit, so it
+#     joins the push run's group and the pair dedupes to one run. Intended.
+#   push to main (a squash merge) → a NEW commit that no PR run shares, so it
+#     always gets its own run. main is never deduped away by a PR.
+#
+# cancel-in-progress is deliberately OFF for main. Everywhere else, superseding
+# an in-flight run of an older commit is what you want. On main the run IS the
+# record of whether the merged state passes — cancelling it to start another
+# would discard exactly the evidence this repo exists to produce, and the
+# guard-ordering bug is a reminder that main's result is the one that matters.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # Read-only by default. This workflow clones public repos and asserts things; it
 # has no reason to be able to write to the repository, and a compromised member
@@ -112,9 +126,16 @@ jobs:
       # persist-credentials: false — checkout otherwise leaves a credential
       # helper in .git/config for the rest of the job, and every member's
       # install script runs after this step.
+      #
+      # fetch-depth: 0 — the shrink-only guard compares each baseline file
+      # against the same file at the change's base, which needs history that a
+      # depth-1 checkout does not have. This repo is a manifest, a script and
+      # two images; a full clone costs nothing, and it removes a whole class of
+      # "the base commit is not fetchable" special-casing.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       # bun is PINNED, and the pin is a measurement, not a preference. This
       # gate's residue baseline (scripts/known-residue.txt) is 37 observed
@@ -142,60 +163,6 @@ jobs:
             echo "$t: $(command -v "$t")"
           done
           bun --version
-
-      - name: shellcheck
-        run: |
-          brew install shellcheck
-          shellcheck -S style scripts/e2e-install-purge.sh
-
-      # ── The baseline files may only ever SHRINK ───────────────────────────
-      #
-      # Both files are waivers: one excuses surviving paths, the other excuses
-      # failing assertions. Their whole value rests on the promise that they get
-      # smaller. Nothing but this step enforces that, and the pressure to add a
-      # line is highest exactly when someone is trying to get a red build green
-      # — which is when the promise matters.
-      #
-      # Additions are not forbidden, they are made deliberate: apply the
-      # `baseline-growth` label to say "yes, this PR knowingly admits a new
-      # gap", and the check passes. Removals and edits to comments are always
-      # fine. Runs with no merge base to compare against (a plain push to main)
-      # skip rather than guess.
-      - name: Baselines may only shrink
-        if: always()
-        env:
-          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HAS_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'baseline-growth') }}
-        run: |
-          set -euo pipefail
-          if [ -z "${BASE_REF}" ] || [ "${BASE_REF}" = "0000000000000000000000000000000000000000" ]; then
-            echo "No merge base to compare against — skipping."; exit 0
-          fi
-          git fetch --no-tags --depth=50 origin "${BASE_REF}" 2>/dev/null || true
-          if ! git cat-file -e "${BASE_REF}^{commit}" 2>/dev/null; then
-            echo "Base commit ${BASE_REF} not fetchable — skipping."; exit 0
-          fi
-          # Compare only the EFFECTIVE entries, so rewording a reason (which is
-          # encouraged) never trips the gate. Same parse the harness uses.
-          entries() { sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//' | grep -v '^$' | LC_ALL=C sort; }
-          grew=0
-          for f in scripts/known-residue.txt scripts/known-failures.txt; do
-            git show "${BASE_REF}:${f}" 2>/dev/null | entries > /tmp/base.txt || : > /tmp/base.txt
-            entries < "${f}" > /tmp/head.txt
-            added="$(comm -13 /tmp/base.txt /tmp/head.txt)"
-            removed="$(comm -23 /tmp/base.txt /tmp/head.txt)"
-            [ -n "${removed}" ] && printf '%s: removed (good):\n%s\n' "${f}" "${removed}"
-            if [ -n "${added}" ]; then
-              grew=1
-              printf '::error file=%s::%s gained entries — a baseline may only shrink:\n%s\n' "${f}" "${f}" "${added}"
-            fi
-          done
-          if [ "${grew}" = "1" ] && [ "${HAS_OVERRIDE}" != "true" ]; then
-            echo "::error::Add the 'baseline-growth' label if this addition is intended and reviewed."
-            exit 1
-          fi
-          [ "${grew}" = "1" ] && echo "::warning::Baselines grew; allowed by the 'baseline-growth' label."
-          exit 0
 
       # The harness clones arc itself, so nothing here depends on a checkout
       # this workflow arranged. ARC_REF is what makes `workflow_dispatch`
@@ -247,6 +214,58 @@ jobs:
       - name: Fault-inject the containment tripwire (A6.4 must not be blind)
         if: always()
         run: ./scripts/e2e-install-purge.sh --check-tripwire --keep --workdir "${RUNNER_TEMP}/e2e-tripwire"
+
+      # ═══════════════════════════════════════════════════════════════════
+      # JUDGEMENT STEPS — deliberately AFTER the harness, every one always()
+      # ═══════════════════════════════════════════════════════════════════
+      #
+      # These decide whether the change is acceptable. None of them decides
+      # whether the harness RUNS, and the ordering is the mechanism.
+      #
+      # This is not stylistic. The shrink-only guard used to sit before the E2E
+      # step; on the squash-merge to main it compared against a parent that
+      # predates the baseline files, read all 40 entries as additions, failed —
+      # and skipped the gate. The harness never ran on main at all. A guard that
+      # can silently disable the thing it guards is worse than no guard, and no
+      # amount of care inside the guard fixes that: the ordering does.
+      #
+      # So the harness and its three fault injections run first and always
+      # produce their evidence; these run afterwards, each failing on its own
+      # name so attribution stays legible in the step list.
+
+      - name: shellcheck
+        if: always()
+        run: |
+          set -euo pipefail
+          brew install shellcheck
+          shellcheck -S style scripts/e2e-install-purge.sh scripts/check-baseline-shrink.sh
+
+      # The guard's own unit test. It shipped with a bug that disabled the gate,
+      # so it gets what every other detector here gets: cases with known
+      # answers, run every pass. Case 1 is the regression guard for that bug.
+      - name: Self-test the shrink-only guard
+        if: always()
+        run: ./scripts/check-baseline-shrink.sh --self-test
+
+      # For pull_request the base is passed explicitly from the event payload
+      # rather than inferred; for push the script's default (HEAD's first
+      # parent) is the previous commit on the branch. A file absent at that
+      # base is being INTRODUCED and is reviewed as a whole — see the script.
+      - name: Baselines may only shrink
+        if: always()
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HAS_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'baseline-growth') }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ -n "${PR_BASE_SHA}" ]; then
+            args+=(--base "${PR_BASE_SHA}")
+          fi
+          if [ "${HAS_OVERRIDE}" = "true" ]; then
+            args+=(--allow-growth)
+          fi
+          ./scripts/check-baseline-shrink.sh ${args[@]+"${args[@]}"}
 
       # ── The run summary a reader actually sees ────────────────────────────
       #
