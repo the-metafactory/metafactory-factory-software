@@ -59,7 +59,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 #
 # `arc install` of this manifest into an isolated $HOME resolved all five
-# members, showed ONE combined review (48 capability lines, Risk: HIGH —
+# members, showed ONE combined review (47 capability lines, Risk: HIGH —
 # network ∧ write, with cortex's unrestricted bash infecting the whole
 # surface), landed every member at its exact pin, and recorded the composition
 # `status: complete`. The real $HOME was byte-identical before and after,
@@ -185,7 +185,7 @@ produces: software
 #
 # The real surface is computed at install from the members' own manifests and
 # shown ONCE, attributed line by line, with nothing summarised away (D2).
-# MEASURED on the 2026-09-02 hermetic run: 48 lines — 8 reads, 12 writes, 10
+# MEASURED on the 2026-09-02 hermetic run: 47 lines — 8 reads, 12 writes, 10
 # network hosts, 9 bash grants, 8 secrets — and `Risk: HIGH (combined)`.
 #
 # Two things in that review only a COMBINED one can tell you, and both are the

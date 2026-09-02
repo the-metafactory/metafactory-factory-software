@@ -31,7 +31,7 @@ yes; one bad member aborts all of it.
 shelf"), so members are addressed by git URL for now and the git URL above is
 the install path. Flipping to registry names is one line per member.
 
-**What the review shows.** 48 capability lines and `Risk: HIGH (combined)` —
+**What the review shows.** 47 capability lines and `Risk: HIGH (combined)` —
 which is a property of the *union*, not of any member: one member reaches the
 network, another writes to disk. It also flags that cortex's unrestricted bash
 makes the whole composition unrestricted, however careful the other members'
