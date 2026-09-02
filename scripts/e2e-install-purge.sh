@@ -65,12 +65,15 @@
 #
 #   scripts/e2e-install-purge.sh                  # the gate
 #   scripts/e2e-install-purge.sh --strict         # the DoD: require an EMPTY diff
-#   scripts/e2e-install-purge.sh --inject-residue # fault-inject; MUST go RED
-#   scripts/e2e-install-purge.sh --check-stub     # prove the launchctl stub bites
+#   scripts/e2e-install-purge.sh --inject-residue  # fault-inject; MUST go RED
+#   scripts/e2e-install-purge.sh --check-stub      # prove the launchctl stub bites
+#   scripts/e2e-install-purge.sh --check-tripwire  # prove A6.4 is not blind (fast)
 #
-# The two injection modes INVERT the exit code: they exit 0 when the detector
-# they target fired, and they judge only that detector — not the gate's overall
-# result, which may be red for unrelated reasons.
+# The injection modes INVERT the exit code: they exit 0 when the detector they
+# target behaved correctly, and they judge only that detector — not the gate's
+# overall result, which may be red for unrelated reasons. Every detector here
+# has one, because a detector nobody has watched fail is a detector nobody
+# should trust. --check-tripwire needs no install and takes a second.
 #   scripts/e2e-install-purge.sh --keep           # leave $WORKDIR for inspection
 #
 # The default gate fails on any regression — anything surviving the purge that
@@ -99,6 +102,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 MANIFEST="${REPO_ROOT}/arc-manifest.yaml"
 
+# The two reviewed baseline files. Declared together, up here, because preflight
+# reads the waiver file before anything else happens (see the A6.4 guard).
+WAIVERS="${SCRIPT_DIR}/known-failures.txt"
+RESIDUE_BASELINE="${SCRIPT_DIR}/known-residue.txt"
+
 # The composition under test. Read from the manifest rather than hardcoded, so
 # a rename of the package cannot leave this harness silently testing nothing.
 FACTORY=""
@@ -110,6 +118,7 @@ BUN="${BUN:-bun}"
 
 INJECT_RESIDUE=0
 CHECK_STUB=0
+CHECK_TRIPWIRE=0
 KEEP=0
 STRICT=0
 WORKDIR="${E2E_WORKDIR:-}"
@@ -118,10 +127,13 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --inject-residue) INJECT_RESIDUE=1 ;;
     --check-stub)     CHECK_STUB=1 ;;
+    --check-tripwire) CHECK_TRIPWIRE=1 ;;
     --keep)           KEEP=1 ;;
     --strict)         STRICT=1 ;;
     --workdir)        shift; WORKDIR="${1:?--workdir needs a path}" ;;
-    -h|--help)        sed -n '2,80p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    # Print the header block by delimiter rather than by line number: a fixed
+    # range silently starts lying the moment the header grows, and it had.
+    -h|--help)        awk 'NR>1 && /^set -euo pipefail$/{exit} NR>1' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) printf 'e2e: unknown argument: %s\n' "$1" >&2; exit 2 ;;
   esac
   shift
@@ -189,6 +201,24 @@ info "git:      $(git --version 2>/dev/null | head -1)"
 # every later phase overwrites $HOME.
 REAL_HOME="${HOME}"
 info "real \$HOME (must end untouched): ${REAL_HOME}"
+
+# ── The un-waivable assertion, enforced before anything runs ─────────────────
+#
+# A6.4 is the tripwire for a service-manager call reaching outside the
+# workspace. Waiving it would let a real containment failure land as a
+# known-failure line nobody reads.
+#
+# Checked HERE, in preflight, and unconditionally — not down in the summary and
+# not only when waivers are being honoured. Two reasons. A run that is going to
+# refuse should refuse in the first second, not after fifteen minutes of
+# cloning. And the earlier placement caught a subtler hole: the guard used to
+# sit behind the same `STRICT -eq 0` condition that loads the waiver list, so
+# `--strict` silently skipped it — meaning the file could acquire an A6.4 line,
+# pass a --strict run, and only be refused later.
+if [ -f "${WAIVERS}" ] \
+  && sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//' "${WAIVERS}" | grep -qx 'A6.4'; then
+  die "A6.4 is listed in ${WAIVERS}. That assertion may not be waived: it is the tripwire for a service-manager call reaching outside the workspace. Remove the line."
+fi
 
 # ── The manifest's declared members, at their declared pins ──────────────────
 #
@@ -259,36 +289,71 @@ done <<< "${MEMBERS_FILE_SRC}"
 # the operator's machine working correctly, and a detector that calls it a
 # containment leak is a detector nobody will believe the day it is right.
 #
-#   STRICT surfaces — path + size + mtime. Only directories that are genuinely
+#   STRICT surfaces — path + size + mtime. Only things that are genuinely
 #   quiet: nothing on a working machine writes to them on its own. A byte of
 #   drift here is a real finding.
 #
-#   NAME-SET surfaces — paths only, no stat. Directories that legitimately churn
-#   because something living writes to them: ~/.claude (the running agent
-#   session), ~/.config/metafactory and ~/.local/state/metafactory (a running
-#   cortex), ~/.local/share/metafactory/arc (arc's registry, if the operator
-#   runs arc in another terminal).
+#   ARTIFACT existence — for each thing this composition installs, is it present
+#   in the REAL home, and is that the same answer before and after? This is the
+#   leak signature stated directly, and it is immune to the machine being used
+#   while the harness runs.
 #
-# The trade is stated rather than hidden: a leak that MODIFIED an existing file
-# under a name-set surface without creating anything new would not be caught.
-# That is an acceptable trade because every containment failure this harness
-# actually guards against creates paths — a skill directory dropped into
-# ~/.claude/skills, a shim in ~/.local/bin, a plist in ~/Library/LaunchAgents, a
-# member repo cloned under arc's repos/, a cortex config tree written from
-# scratch. Those are all new entries, and a name-set sees every one of them.
+# NOTE ON SCOPE, so A6.1 is not read as more than it is. Both lists are a NAMED
+# SET, not the whole home directory. A6.1 proves "the service directories stayed
+# byte-identical, and none of this composition's artifacts appeared in the real
+# home". That is the useful claim, and it is not the same claim as "nothing
+# anywhere under $HOME changed" — a live machine writes constantly, and any
+# check that asserted otherwise would be red every run. A member writing
+# somewhere it never declared would be invisible here, and would also be a
+# manifest defect, which A5's diff over the hermetic $HOME is the detector for.
 
 HOST_STRICT_PATHS=(
   "${REAL_HOME}/Library/LaunchAgents"          # cortex's launchd plists (macOS) — the file half of the launchd hazard
   "${REAL_HOME}/.config/systemd/user"          # cortex's systemd units (Linux) — the same hazard's Linux half
   "${REAL_HOME}/.config/nats"                  # cortex's bus config; nothing writes here unattended
+  "${REAL_HOME}/.local/share/metafactory/arc/packages.db"  # arc's registry — a leaked install would write it
 )
-HOST_NAMESET_PATHS=(
-  "${REAL_HOME}/.claude"                       # churns: the live agent session writes here continuously
-  "${REAL_HOME}/.config/metafactory"           # churns: a running cortex/blueprint writes logs and pidfiles here
-  "${REAL_HOME}/.local/share/metafactory"      # churns: arc's own registry, if arc runs elsewhere
-  "${REAL_HOME}/.local/state/metafactory"      # churns: a running cortex writes here
-  "${REAL_HOME}/bin"
-  "${REAL_HOME}/.local/bin"
+
+# ── The artifact list: WHAT would appear if containment failed ──────────────
+#
+# The name-set surfaces this replaces were too broad, and the gate caught the
+# consequence itself: a run went red on
+#
+#   +/Users/andreas/.local/state/metafactory/luna-drafts/316-slices.md
+#
+# which is the operator's own assistant writing a note, mid-run, in a directory
+# that merely shares an ancestor with cortex's state. Nothing to do with the
+# composition. A containment check that goes red because the machine was being
+# used is a flaky check, and a flaky check is one people learn to re-run until
+# it is green — which is the same as not having it.
+#
+# So the question is asked precisely instead of broadly: not "did anything new
+# appear under these directories", but "did any of the artifacts THIS
+# COMPOSITION installs appear in the real $HOME". Every entry below is the
+# real-home twin of something A3 asserts landed in the hermetic one.
+#
+# EXISTENCE IS COMPARED BEFORE AND AFTER, not merely tested. Several of these
+# legitimately already exist on a machine that runs cortex — the check is that
+# the run did not CHANGE that, which is the actual claim and is true whether or
+# not the operator already has the package.
+HOST_ARTIFACT_PATHS=(
+  "${REAL_HOME}/.claude/skills/Governance"
+  "${REAL_HOME}/.claude/skills/plan-breakdown"
+  "${REAL_HOME}/.claude/skills/code-review"
+  "${REAL_HOME}/.claude/relay/relay-policy.yaml"
+  "${REAL_HOME}/.claude/events"
+  "${REAL_HOME}/bin/discord"
+  "${REAL_HOME}/.local/bin/cortex"
+  "${REAL_HOME}/.local/bin/cortex-relay"
+  "${REAL_HOME}/.local/bin/cldyo-live"
+  "${REAL_HOME}/.config/metafactory/cortex"
+  "${REAL_HOME}/.local/state/metafactory/cortex"
+  "${REAL_HOME}/.local/share/metafactory/cortex"
+  "${REAL_HOME}/.local/share/metafactory/arc/repos/cortex"
+  "${REAL_HOME}/.local/share/metafactory/arc/repos/compass-core"
+  "${REAL_HOME}/.local/share/metafactory/arc/repos/metafactory-bundle-discord"
+  "${REAL_HOME}/.local/share/metafactory/arc/repos/metafactory-skill-code-review"
+  "${REAL_HOME}/.local/share/metafactory/arc/repos/metafactory-cortex-adapter-discord"
 )
 
 # ── The service table, and why only OUR labels are compared ─────────────────
@@ -324,12 +389,13 @@ fingerprint_host() {
       printf '(absent)\n' >> "${out}"
     fi
   done
-  for p in "${HOST_NAMESET_PATHS[@]}"; do
-    printf '### NAMESET %s\n' "${p}" >> "${out}"
-    if [ -e "${p}" ]; then
-      find "${p}" -maxdepth 3 2>/dev/null | LC_ALL=C sort >> "${out}"
+  # Existence only, one line each. `-e` misses a dangling symlink, which is
+  # exactly the kind of debris worth catching, so `-L` covers it too.
+  for p in "${HOST_ARTIFACT_PATHS[@]}"; do
+    if [ -e "${p}" ] || [ -L "${p}" ]; then
+      printf '### ARTIFACT present %s\n' "${p}" >> "${out}"
     else
-      printf '(absent)\n' >> "${out}"
+      printf '### ARTIFACT absent  %s\n' "${p}" >> "${out}"
     fi
   done
   # The live service table, filtered to labels this ecosystem could own. This is
@@ -352,6 +418,53 @@ else
   stat_size()  { stat -c '%s' "$1" 2>/dev/null || echo '?'; }
   stat_mtime() { stat -c '%Y' "$1" 2>/dev/null || echo '?'; }
 fi
+
+# ── The containment predicate behind A6.4 ───────────────────────────────────
+#
+# Given the stub's call log, print every path token that lives under the real
+# $HOME but OUTSIDE the workspace. Empty output means every call was contained.
+#
+# TWO BUGS ARE DESIGNED OUT HERE, both of which shipped in earlier versions and
+# both of which were found by running the thing rather than reading it.
+#
+# 1. SUBSTRING, NOT CONTAINMENT. The first version asked "does the call mention
+#    $REAL_HOME?". On a GitHub runner the workspace lives INSIDE the home
+#    directory — HOME=/Users/runner, WORKDIR=/Users/runner/work/_temp/e2e — so
+#    every properly-contained path has $REAL_HOME as a prefix and the tripwire
+#    fired on all of them, every run.
+#
+# 2. PREFIX-SIBLINGS. The fix for (1) stripped `${WORKDIR}[^[:space:]]*`, which
+#    also erases any SIBLING sharing the prefix: with WORKDIR=…/e2e, a call
+#    naming …/e2e-evil was scrubbed and the escape went unreported. Not
+#    hypothetical in this repo — CI runs the injection modes in …/e2e-inject and
+#    …/e2e-stub, exact prefix-siblings of the gate's own …/e2e. A tripwire that
+#    silently ignores a whole class of path is worse than one that cries wolf.
+#
+# Both are avoided by comparing LITERALLY and anchoring on the separator: a
+# token counts as contained only when it equals the workspace root or begins
+# with the root plus "/". awk's `index()` and `==` do no pattern matching at
+# all, so there is nothing to escape — which also disposes of a third latent
+# bug, the unescaped "." in mktemp's `e2e-factory.XXXXXX` workspace name.
+#
+# Both spellings of the workspace are accepted because macOS hands out /tmp and
+# /private/tmp for one directory.
+escaping_calls() {
+  # escaping_calls <logfile> <real-home> <workdir> <workdir-resolved>
+  awk -v home="$2" -v wd="$3" -v wdr="$4" '
+    function under(tok, root) {
+      # Literal, separator-anchored. Never a regex.
+      return (tok == root) || (index(tok, root "/") == 1)
+    }
+    {
+      for (i = 1; i <= NF; i++) {
+        tok = $i
+        if (!under(tok, home)) continue        # not a real-$HOME path at all
+        if (under(tok, wd) || under(tok, wdr)) continue   # inside the workspace
+        printf "line %d: %s\n", FNR, tok
+      }
+    }
+  ' "$1"
+}
 
 # ABSOLUTE PATHS ONLY. By the time this is called the second time, the stub dir
 # is first on PATH — asking PATH for `launchctl` would interrogate the stub and
@@ -395,6 +508,7 @@ STUB_LOG="${WORKDIR}/service-manager-calls.log"
 mkdir -p "${HERM}" "${STUBS}" "${LOGS}"
 : > "${STUB_LOG}"
 
+WORKDIR_REAL="$(cd "${WORKDIR}" && pwd -P)"
 info "workdir: ${WORKDIR}"
 
 # shellcheck disable=SC2329  # invoked by the EXIT trap below, not by name
@@ -411,6 +525,68 @@ cleanup() {
   exit "${rc}"
 }
 trap cleanup EXIT
+
+# ═════════════════════════════════════════════════════════════════════════════
+# --check-tripwire — the standing fault injection for A6.4
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# A6.4 is the only assertion that may never be waived, and until this existed it
+# was also the only detector with no proof that it still worked. That is a bad
+# combination: its healthy state is "found nothing", which is indistinguishable
+# from "cannot find anything". Both bugs described above lived in it, and both
+# reached CI.
+#
+# This drives the REAL predicate — `escaping_calls`, the same function A6.4
+# uses — over synthetic logs with known answers. Synthetic values are used for
+# home and workspace rather than the machine's, so the cases are identical on a
+# laptop (workspace outside $HOME) and on a runner (workspace inside it), and
+# the prefix-sibling case can be posed at all.
+#
+# It runs BEFORE the install and exits: it is a self-test of a detector, not a
+# test of the composition, and it should stay answerable when everything else
+# is broken.
+if [ "${CHECK_TRIPWIRE}" -eq 1 ]; then
+  hdr "TRIPWIRE CHECK — fault-injecting A6.4's containment predicate"
+  T_HOME="/Users/runner"
+  T_WD="/Users/runner/work/_temp/e2e"
+  TDIR="${WORKDIR}/tripwire"; mkdir -p "${TDIR}"
+
+  # tw <id> <description> <expect: FLAG|CLEAR> <log line...>
+  tw() {
+    local id="$1" desc="$2" want="$3"; shift 3
+    local log="${TDIR}/${id}.log"
+    printf '%s\n' "$@" > "${log}"
+    local got=CLEAR
+    [ -n "$(escaping_calls "${log}" "${T_HOME}" "${T_WD}" "${T_WD}")" ] && got=FLAG
+    if [ "${got}" = "${want}" ]; then pass "${id}" "${desc} → ${got}"
+    else fail "${id}" "${desc} → got ${got}, wanted ${want}"; fi
+  }
+
+  tw T1 "a real-\$HOME plist outside the workspace" FLAG \
+    "ts launchctl bootout gui/501 ${T_HOME}/Library/LaunchAgents/ai.meta-factory.cortex.relay.plist"
+  tw T2 "a contained workspace path (nested under \$HOME, the CI layout)" CLEAR \
+    "ts launchctl bootout gui/501 ${T_WD}/home/Library/LaunchAgents/ai.meta-factory.cortex.relay.plist"
+  # T3 is the regression guard for the prefix-sibling bug. CI genuinely creates
+  # these siblings: e2e-inject and e2e-stub sit next to e2e.
+  tw T3 "a PREFIX-SIBLING of the workspace (…/e2e-evil vs …/e2e)" FLAG \
+    "ts launchctl bootout gui/501 ${T_WD}-evil/Library/LaunchAgents/x.plist"
+  tw T4 "an escape sharing one LINE with a contained path" FLAG \
+    "ts launchctl bootout gui/501 ${T_WD}/home/a.plist ${T_HOME}/Library/LaunchAgents/b.plist"
+  tw T5 "the workspace root named bare, with no trailing slash" CLEAR \
+    "ts launchctl bootout gui/501 ${T_WD}"
+  tw T6 "no calls at all" CLEAR ""
+
+  hdr "Result"
+  if [ "${FAIL_COUNT}" -eq 0 ]; then
+    say "   ✅ TRIPWIRE INTACT — ${PASS_COUNT} case(s): A6.4 flags an escape, ignores a"
+    say "      contained path, and is NOT blinded by a prefix-sibling."
+    exit 0
+  fi
+  say "   ❌ TRIPWIRE BLIND — ${FAIL_COUNT} case(s) wrong:"
+  for f in ${FAILURES[@]+"${FAILURES[@]}"}; do say "        ${f}"; done
+  say "      A6.4 cannot be trusted until these pass. It is the un-waivable one."
+  exit 1
+fi
 
 # ── The service-manager stubs ────────────────────────────────────────────────
 #
@@ -491,10 +667,35 @@ arc() {
     # operator's ~/.local/bin and friends are deliberately absent so a tool that
     # only exists on this developer's machine cannot make the run pass.
     export PATH="${STUBS}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${BUN_DIR}"
-    # Nothing for the secrets questionnaire to harvest, and nothing for a member
-    # to authenticate with. Combined with </dev/null, every prompt returns empty.
+    # Temp files land in the workspace too. Without this, anything a member's
+    # install script writes via mktemp goes to the system temp dir — outside
+    # every redirect above, and surviving the workspace cleanup. A hermetic
+    # $HOME sharing the host's /tmp is only most of the way hermetic.
+    #
+    # Deliberately ${WORKDIR}/tmp and NOT under ${HERM}: it must be contained,
+    # but it must not be SNAPSHOTTED. arc mkdtemps `arc-purge-*` while running
+    # its purge hooks, and randomly-named directories inside the snapshot root
+    # would make the post-purge diff nondeterministic — every run reporting a
+    # different unbaselined path, which no baseline file can ever describe.
+    # Containment is the goal here; the diff is about the hermetic $HOME.
+    export TMPDIR="${WORKDIR}/tmp"
+    mkdir -p "${TMPDIR}"
+    # The secrets questionnaire has nothing to harvest and no member can
+    # authenticate as the operator. Combined with </dev/null, every prompt
+    # returns empty.
+    #
+    # The list is deliberately wider than the manifest's declared secrets. Those
+    # eight are what the composition ASKS for; these are what a member could
+    # reach for without asking, and the whole point of a hermetic rig is that it
+    # cannot be quietly used as the operator. SSH_AUTH_SOCK matters most and is
+    # the least obvious: it is a socket path, so no amount of $HOME redirection
+    # touches it, and leaving it set hands every `git clone` in the run the
+    # operator's live agent keys.
     unset GH_TOKEN GITHUB_TOKEN ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN \
-          NATS_TOKEN CTX_DISCORD_TOKEN CTX_WEB_TOKEN CLOUDFLARE_API_TOKEN
+          NATS_TOKEN CTX_DISCORD_TOKEN CTX_WEB_TOKEN CLOUDFLARE_API_TOKEN \
+          SSH_AUTH_SOCK GIT_SSH_COMMAND \
+          AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE \
+          OPENAI_API_KEY HOMEBREW_GITHUB_API_TOKEN NPM_TOKEN
     "${BUN}" "${ARC_DIR}/src/cli.ts" "$@" < /dev/null
   )
 }
@@ -542,10 +743,9 @@ EXCLUDE_PREFIXES=(
   ".cache"
 )
 
-# The itemised baseline of paths known to survive a purge today. Format:
-# one path per line, `#` comments and blank lines ignored, trailing `# reason`
-# stripped. Absent file = an empty baseline, i.e. the strictest possible gate.
-RESIDUE_BASELINE="${SCRIPT_DIR}/known-residue.txt"
+# RESIDUE_BASELINE is declared at the top of the file, alongside WAIVERS.
+# Format: one path per line, `#` comments and blank lines ignored, trailing
+# `# reason` stripped. Absent file = an empty baseline, the strictest gate.
 
 snapshot() {
   # snapshot <outfile> — every path under the hermetic home, relative, sorted.
@@ -1167,7 +1367,7 @@ diff -u "${HOST_BEFORE}" "${HOST_AFTER}" > "${HOST_DIFF}" 2>&1 || true
 HOST_CHANGES="$(grep -c '^[+-][^+-]' "${HOST_DIFF}" || true)"
 
 if [ "${HOST_CHANGES}" -eq 0 ]; then
-  pass A6.1 "real \$HOME fingerprint is byte-identical before and after"
+  pass A6.1 "real \$HOME unchanged: quiet service dirs byte-identical, no composition artifact appeared"
 else
   fail A6.1 "real \$HOME fingerprint CHANGED (${HOST_CHANGES} line(s)) — containment leaked"
   while IFS= read -r line; do info "  ${line}"; done < <(head -60 "${HOST_DIFF}")
@@ -1227,35 +1427,16 @@ fi
 # evidence. A6.4 is the tripwire for the strictly worse case: a call naming a
 # REAL $HOME path, which would mean containment failed before launchd was even
 # reached. It is gating in every mode and appears in no waiver file.
-# HOW THE CHECK IS WRITTEN, AND THE BUG IT IS WRITTEN AGAINST. The first version
-# of this asked "does the call mention $REAL_HOME?", which is a SUBSTRING test
-# where a CONTAINMENT test was needed. It passed locally and failed on every
-# GitHub runner, because a runner's temp dir lives INSIDE the home directory:
-#
-#   HOME=/Users/runner   WORKDIR=/Users/runner/work/_temp/e2e
-#
-# so every perfectly-contained workspace path contains $REAL_HOME as a prefix
-# and the tripwire fired on all of them. A tripwire that cries wolf on every run
-# is worse than no tripwire — it is the exact failure this harness's whole
-# waiver design exists to prevent, and it happened here.
-#
-# The fix is to subtract before testing: strip every workspace path token from
-# the log, THEN look for a real-$HOME path in what is left. Correct whether or
-# not the workspace happens to sit under the home directory. Both the logical
-# and the symlink-resolved spellings of the workspace are stripped, since macOS
-# hands out /tmp and /private/tmp for the same directory.
-WORKDIR_REAL="$(cd "${WORKDIR}" && pwd -P)"
-SCRUBBED="${LOGS}/stub-calls-outside-workspace.txt"
-sed -e "s|${WORKDIR}[^[:space:]]*||g" -e "s|${WORKDIR_REAL}[^[:space:]]*||g" \
-  "${STUB_LOG}" > "${SCRUBBED}"
+ESCAPES="${LOGS}/stub-calls-outside-workspace.txt"
+escaping_calls "${STUB_LOG}" "${REAL_HOME}" "${WORKDIR}" "${WORKDIR_REAL}" > "${ESCAPES}"
+ESCAPE_COUNT="$(grep -c . "${ESCAPES}" || true)"
 
 if [ "${STUB_CALLS}" -eq 0 ]; then
   pass A6.4 "no call to check (none attempted)"
-elif grep -qF "${REAL_HOME}/" "${SCRUBBED}"; then
+elif [ "${ESCAPE_COUNT}" -gt 0 ]; then
   fail A6.4 "a service-manager call named a path in the REAL \$HOME, outside the workspace — containment failed upstream of launchd"
-  grep -nF "${REAL_HOME}/" "${SCRUBBED}" > "${LOGS}/real-home-calls.txt" || true
-  info "offending call(s), with workspace paths blanked out so what is left is the problem:"
-  while IFS= read -r line; do info "  ${line}"; done < "${LOGS}/real-home-calls.txt"
+  info "offending path token(s):"
+  while IFS= read -r line; do info "  ${line}"; done < "${ESCAPES}"
 else
   pass A6.4 "every intercepted call named only workspace paths (the stub, not the path, is what kept the real session safe)"
 fi
@@ -1321,13 +1502,9 @@ say ""
 # only ever shrink, and `--strict` ignores it entirely.
 #
 # A6.4 is deliberately un-waivable and is refused if it appears in the file.
-WAIVERS="${SCRIPT_DIR}/known-failures.txt"
 WAIVED_IDS=""
 if [ -f "${WAIVERS}" ] && [ "${STRICT}" -eq 0 ]; then
   WAIVED_IDS="$(sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//' "${WAIVERS}" | grep -v '^$' || true)"
-fi
-if printf '%s\n' "${WAIVED_IDS}" | grep -qx 'A6.4'; then
-  die "A6.4 is in ${WAIVERS} — that assertion may not be waived. It is the tripwire for a service-manager call reaching the real \$HOME."
 fi
 
 WAIVED_FAILURES=0

@@ -76,9 +76,19 @@ on:
         required: false
         default: false
 
+# Keyed on the HEAD SHA rather than the ref, so the push run and the
+# pull_request run for one commit collapse into a single macOS run instead of
+# two. `github.event.pull_request.head.sha` is empty on a push, where
+# `github.sha` is already the commit — the fallback covers both.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
+
+# Read-only by default. This workflow clones public repos and asserts things; it
+# has no reason to be able to write to the repository, and a compromised member
+# repo's install script runs with whatever the job is granted.
+permissions:
+  contents: read
 
 jobs:
   e2e:
@@ -91,11 +101,34 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
+      # Actions are SHA-pinned, not tag-pinned. A tag is mutable: `@v4` is a
+      # pointer its owner can move, so a tag-pinned workflow re-resolves to
+      # different code on a schedule nobody here controls. This job runs
+      # arbitrary install scripts from five member repos on a machine with a
+      # checkout; it is not the place to also accept a moving toolchain.
+      # The `# v4` comments are what make the pins auditable — bump them
+      # deliberately, in a diff that says so.
+      #
+      # persist-credentials: false — checkout otherwise leaves a credential
+      # helper in .git/config for the rest of the job, and every member's
+      # install script runs after this step.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          bun-version: "latest"
+          persist-credentials: false
+
+      # bun is PINNED, and the pin is a measurement, not a preference. This
+      # gate's residue baseline (scripts/known-residue.txt) is 37 observed
+      # paths; the toolchain that produced them is part of what makes that
+      # number reproducible. `latest` — which arc's own CI still uses — silently
+      # re-resolves and would turn a toolchain change into an unexplained red
+      # diff, the lesson arc#405 already paid for.
+      #
+      # 1.4.0 is current stable, and the baseline is verified on it: CI's green
+      # run measured the same 37 paths on 1.4.0 that a laptop measured on 1.3.2.
+      # Bumping this line should come with a run that confirms the number.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.0"
 
       # The manifest declares git, gh and bun in `tools:`, and arc checks that
       # block BEFORE fetching a byte. Proving the runner satisfies it here means
@@ -114,6 +147,55 @@ jobs:
         run: |
           brew install shellcheck
           shellcheck -S style scripts/e2e-install-purge.sh
+
+      # ── The baseline files may only ever SHRINK ───────────────────────────
+      #
+      # Both files are waivers: one excuses surviving paths, the other excuses
+      # failing assertions. Their whole value rests on the promise that they get
+      # smaller. Nothing but this step enforces that, and the pressure to add a
+      # line is highest exactly when someone is trying to get a red build green
+      # — which is when the promise matters.
+      #
+      # Additions are not forbidden, they are made deliberate: apply the
+      # `baseline-growth` label to say "yes, this PR knowingly admits a new
+      # gap", and the check passes. Removals and edits to comments are always
+      # fine. Runs with no merge base to compare against (a plain push to main)
+      # skip rather than guess.
+      - name: Baselines may only shrink
+        if: always()
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HAS_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'baseline-growth') }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_REF}" ] || [ "${BASE_REF}" = "0000000000000000000000000000000000000000" ]; then
+            echo "No merge base to compare against — skipping."; exit 0
+          fi
+          git fetch --no-tags --depth=50 origin "${BASE_REF}" 2>/dev/null || true
+          if ! git cat-file -e "${BASE_REF}^{commit}" 2>/dev/null; then
+            echo "Base commit ${BASE_REF} not fetchable — skipping."; exit 0
+          fi
+          # Compare only the EFFECTIVE entries, so rewording a reason (which is
+          # encouraged) never trips the gate. Same parse the harness uses.
+          entries() { sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//' | grep -v '^$' | LC_ALL=C sort; }
+          grew=0
+          for f in scripts/known-residue.txt scripts/known-failures.txt; do
+            git show "${BASE_REF}:${f}" 2>/dev/null | entries > /tmp/base.txt || : > /tmp/base.txt
+            entries < "${f}" > /tmp/head.txt
+            added="$(comm -13 /tmp/base.txt /tmp/head.txt)"
+            removed="$(comm -23 /tmp/base.txt /tmp/head.txt)"
+            [ -n "${removed}" ] && printf '%s: removed (good):\n%s\n' "${f}" "${removed}"
+            if [ -n "${added}" ]; then
+              grew=1
+              printf '::error file=%s::%s gained entries — a baseline may only shrink:\n%s\n' "${f}" "${f}" "${added}"
+            fi
+          done
+          if [ "${grew}" = "1" ] && [ "${HAS_OVERRIDE}" != "true" ]; then
+            echo "::error::Add the 'baseline-growth' label if this addition is intended and reviewed."
+            exit 1
+          fi
+          [ "${grew}" = "1" ] && echo "::warning::Baselines grew; allowed by the 'baseline-growth' label."
+          exit 0
 
       # The harness clones arc itself, so nothing here depends on a checkout
       # this workflow arranged. ARC_REF is what makes `workflow_dispatch`
@@ -139,30 +221,86 @@ jobs:
       # the gate above is red — which is precisely the period this repo is in,
       # and precisely when "are the detectors still working?" is the question
       # worth answering. A skipped detector proof reads as a pass at a glance.
+      #
+      # `--keep` is required, not optional: without it the harness's EXIT trap
+      # deletes the workspace on the way out, so the artifact paths below refer
+      # to directories that no longer exist and the upload silently contributes
+      # nothing. The evidence from an injection run is worth as much as the
+      # evidence from the gate run.
       - name: Fault-inject the detector (must observe RED)
         if: always()
-        run: ./scripts/e2e-install-purge.sh --inject-residue --workdir "${RUNNER_TEMP}/e2e-inject"
+        run: ./scripts/e2e-install-purge.sh --inject-residue --keep --workdir "${RUNNER_TEMP}/e2e-inject"
 
       # Same argument, applied to the launchctl stub — the one detector whose
       # healthy state is an EMPTY log, and therefore the one that could be
       # broken for months without anyone noticing.
       - name: Fault-inject the service-manager stub (must be intercepted)
         if: always()
-        run: ./scripts/e2e-install-purge.sh --check-stub --workdir "${RUNNER_TEMP}/e2e-stub"
+        run: ./scripts/e2e-install-purge.sh --check-stub --keep --workdir "${RUNNER_TEMP}/e2e-stub"
+
+      # A6.4 — the un-waivable tripwire — is the third detector, and until this
+      # step existed it was the only one with no proof it still worked. Its
+      # healthy state is "found nothing", which is indistinguishable from
+      # "cannot find anything"; two separate blinding bugs lived in it and both
+      # reached CI. Needs no install, runs in a second, and is placed FIRST
+      # among the proofs because it is the cheapest and the most load-bearing.
+      - name: Fault-inject the containment tripwire (A6.4 must not be blind)
+        if: always()
+        run: ./scripts/e2e-install-purge.sh --check-tripwire --keep --workdir "${RUNNER_TEMP}/e2e-tripwire"
+
+      # ── The run summary a reader actually sees ────────────────────────────
+      #
+      # A green tick on this job means "no regression", NOT "the epic is done" —
+      # and the difference is the whole point of the waiver design. Left to the
+      # tick alone, that distinction lives only in a 1400-line log nobody opens.
+      # This puts the open gaps, with their owners, on the run's front page.
+      - name: Summarise the gaps that are still open
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            echo "## E2E gate — install → inventory → purge → diff"
+            echo
+            echo "Green here means **no regression**, not that the epic is done."
+            echo "The gaps below are known, owned, and still open."
+            echo
+            echo "### Waived assertions (\`scripts/known-failures.txt\`)"
+            echo
+            echo "| Assertion | Owner |"
+            echo "|---|---|"
+            sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//' scripts/known-failures.txt \
+              | grep -v '^$' \
+              | while IFS= read -r id; do
+                  owner="$(grep -A200 "^# ${id//./\\.} —" scripts/known-failures.txt \
+                           | grep -m1 '^# OWNER:' | sed 's/^# OWNER: *//')"
+                  echo "| \`${id}\` | ${owner:-unattributed} |"
+                done
+            echo
+            n="$(sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//' scripts/known-residue.txt | grep -vc '^$')"
+            echo "### Residue baseline (\`scripts/known-residue.txt\`)"
+            echo
+            echo "**${n} paths** survive a clean purge. That set IS the epic's"
+            echo "Definition-of-Done gap; \`--strict\` fails on it deliberately."
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       # Uploaded unconditionally: the run that FAILS is the one whose logs are
       # worth reading, and a failed job that discards its evidence has to be
-      # re-run to learn anything.
+      # re-run to learn anything. Every producing step passes --keep, or these
+      # paths would not exist by now.
       - name: Upload harness logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: e2e-logs
           retention-days: 14
+          if-no-files-found: error
           # The workspace also holds ~17k bun-cache files and the cloned member
           # repos; only the logs are wanted.
           path: |
             ${{ runner.temp }}/e2e/logs/
             ${{ runner.temp }}/e2e/service-manager-calls.log
             ${{ runner.temp }}/e2e-inject/logs/
+            ${{ runner.temp }}/e2e-inject/service-manager-calls.log
             ${{ runner.temp }}/e2e-stub/logs/
+            ${{ runner.temp }}/e2e-stub/service-manager-calls.log
+            ${{ runner.temp }}/e2e-tripwire/tripwire/

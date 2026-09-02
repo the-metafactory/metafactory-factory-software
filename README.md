@@ -120,18 +120,24 @@ those same 3, and that is the honest reading, not a formality:
 
 | Assertion | Gap | Owner |
 |---|---|---|
-| `A5.8` | the DoD itself — 37 paths survive, per `known-residue.txt` | cortex (declare them under `owns:`) |
-| `A6.3` | purge calls `launchctl` against the real login session | cortex |
-| `A1.5` | a declared member is recorded `preexisting` on a fresh machine | arc |
+| `A5.8` | the DoD itself — 37 paths survive, per `known-residue.txt` | [cortex#2520](https://github.com/the-metafactory/cortex/issues/2520) |
+| `A6.3` | purge calls `launchctl` against the real login session | [cortex#2520](https://github.com/the-metafactory/cortex/issues/2520) |
+| `A1.5` | a declared member is recorded `preexisting` on a fresh machine | [arc#417](https://github.com/the-metafactory/arc/issues/417) |
 
 Closing `A5.8` is the epic's remaining work. Nothing here is blocked on arc any
 more.
 
-**The gate has been watched failing.** `--inject-residue` plants leftover state
-after the purge and requires the detectors to catch it; `--check-stub` proves
-the `launchctl` interceptor bites. Both run in CI on every pass, because a gate
-whose last observed failure was on somebody's laptop is a gate nobody should
-trust.
+**Every detector has been watched failing.** `--inject-residue` plants leftover
+state after the purge and requires the detectors to catch it; `--check-stub`
+proves the `launchctl` interceptor bites; `--check-tripwire` drives the
+containment predicate over synthetic logs with known answers, including a
+prefix-sibling case that a previous version of it was blind to. All three run in
+CI on every pass, because a gate whose last observed failure was on somebody's
+laptop is a gate nobody should trust.
+
+The baseline files are enforced shrink-only in CI. Adding an entry needs the
+`baseline-growth` label — deliberately awkward, because the pressure to add one
+is highest exactly when someone is trying to turn a red build green.
 
 **One finding worth reading before you run it anywhere real.** Purging this
 factory issues `launchctl bootout gui/<uid> …` against your *actual* login

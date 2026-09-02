@@ -91,7 +91,8 @@
 # template copied only when absent, so it is arguably `owns.userData` (kept, but
 # then NAMED in the refusal line, which is the honest outcome either way).
 #
-# OWNER: cortex. This is the line item that keeps the epic's DoD from passing.
+# OWNER: cortex — cortex#2520 (OPEN) carries the owns-declaration ask. This is
+# the line item that keeps the epic's DoD from passing.
 # ─────────────────────────────────────────────────────────────────────────────
 ./.claude/events
 ./.claude/events/published
@@ -100,6 +101,43 @@
 ./.claude/logs
 ./.claude/relay
 ./.claude/relay/relay-policy.yaml
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLASS 2b — EMPTY PARENT DIRECTORIES. Previously filed under Class 2 as
+# cortex's to declare. That was over-claiming, and the correction matters
+# because it changes who can fix them.
+#
+# These four are not things cortex created and forgot to declare. They are the
+# PARENTS of paths cortex does declare and arc does delete:
+#
+#   ./.local/state, ./.local/state/metafactory
+#       arc deletes ~/.local/state/metafactory/cortex — the purge report says so
+#       in as many words ("deleted: …/.local/state/metafactory/cortex"). The two
+#       now-empty parents remain.
+#   ./Library, ./Library/LaunchAgents
+#       arc removes the rendered plists; the directory stays.
+#
+# So even a perfect `owns:` declaration in cortex would not remove them: the
+# leaf was declared, was deleted, and the empty parent is what is left.
+#
+# TWO DIFFERENT OWNERS, and neither is cortex:
+#
+#   ./.local/state + ./.local/state/metafactory — arc does not prune parent
+#     directories it emptied. That is a small, defensible arc behaviour (pruning
+#     upward is how a package manager deletes a directory another package is
+#     about to use, or one the operator created), but it is worth naming as a
+#     behaviour rather than leaving it looking like a cortex bug. Recorded as an
+#     observation, not filed: the cost is two empty directories.
+#
+#   ./Library + ./Library/LaunchAgents — macOS-standard, SHARED directories that
+#     no package may delete. Every launchd-using application on the machine uses
+#     ~/Library/LaunchAgents. Removing it because one package's plist went would
+#     be straightforwardly destructive. These are permanently correct residue
+#     and will still be here when the rest of this file is gone.
+#
+# OWNER: arc (the two state parents, as a behaviour note) / nobody (the Library
+# pair — deleting them would be a bug, not a fix).
+# ─────────────────────────────────────────────────────────────────────────────
 ./.local/state
 ./.local/state/metafactory
 ./Library
