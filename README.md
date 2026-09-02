@@ -5,12 +5,15 @@ composition. The tarball will carry no constituent code: an
 `arc-manifest.yaml` whose references point at published members, plus the
 tool checks and the `produces: software` capability declaration.
 
-**Status:** working. arc implements the `factory` type
-([arc#400](https://github.com/the-metafactory/arc/issues/400) install,
-[arc#402](https://github.com/the-metafactory/arc/issues/402) publish
-validation), `arc validate .` is clean, and all five members install from one
+**Status:** installs cleanly, does not yet fully reverse. arc implements the
+`factory` type ([arc#400](https://github.com/the-metafactory/arc/issues/400)
+install, [arc#402](https://github.com/the-metafactory/arc/issues/402) publish
+validation, [arc#401](https://github.com/the-metafactory/arc/issues/401)
+lifecycle), `arc validate .` is clean, and all five members install from one
 command — verified 2026-09-02 into an isolated `$HOME`, with the real one
-byte-identical before and after. Design (ratified 2026-09-02):
+byte-identical before and after. The purge half is measured by this repo's own
+end-to-end gate and is not there yet; see **Removal** and **Verifying it**.
+Design (ratified 2026-09-02):
 [arc `docs/design-factory-type.md`](https://github.com/the-metafactory/arc/blob/main/docs/design-factory-type.md)
 · concept anchor: [arc#365](https://github.com/the-metafactory/arc/issues/365).
 
@@ -41,10 +44,33 @@ thing. That is what the single review is for.
 It covers the five declared members. It does **not** cover what those members
 pull in through their own `depends_on` — see the note under the member table.
 
-**Removal is per-member for now.** `arc remove software-factory` takes down
-the factory record; the members come down individually. The composition-wide
-`files` / `upgrade` / `purge` cascade is
-[arc#401](https://github.com/the-metafactory/arc/issues/401), still open.
+**Removal cascades — and does not yet finish the job.** The composition-wide
+`files` / `upgrade` / `purge` lifecycle ([arc#401](https://github.com/the-metafactory/arc/issues/401))
+has landed on arc `main`, so `arc purge software-factory` takes the whole
+composition down in one command and prints a D6 untangle verdict saying what,
+if anything, it left behind.
+
+Measured end to end by this repo's own gate (see **Verifying it** below), on
+stock arc `main` at `7e3c17a`:
+
+* **The cascade completes and reports `untangle: CLEAN`.** All ten packages go
+  — the five declared members, cortex's four cascade dependencies, and the
+  composition record. `arc list` is empty afterwards.
+* **Clean is not the same as complete.** 37 paths survive, every one itemised
+  in [`scripts/known-residue.txt`](scripts/known-residue.txt). The substantive
+  half is cortex's postinstall creating runtime directories and a relay policy
+  file that cortex's manifest does not declare under `owns:` — and arc only
+  purges what a package declares, so `untangle: CLEAN` is printed truthfully
+  while all of it is still on disk. arc names this failure mode itself, as
+  arc#401 residual risk (c). That gap is the one thing standing between this
+  factory and the epic's Definition of Done.
+
+Until [arc#412](https://github.com/the-metafactory/arc/issues/412) merged, the
+purge crashed part-way through this composition and left seven of the ten
+packages installed — a scoped member name (compass-core's
+`@the-metafactory/compass-core`) threw inside a secret-backend constructor that
+sat outside the `try`/`catch`. This gate is what found it. It is fixed on arc
+`main`; no patch is needed to run any of the below.
 
 ## The idea
 
@@ -56,9 +82,71 @@ combined capability review, reversible with `arc purge`. The Nth factory
 costs a declaration, not an integration project.
 
 That is the design. Today the install half is real and the reverse half is
-partial: `arc purge` does not yet cascade across a composition
-([arc#401](https://github.com/the-metafactory/arc/issues/401), open), so
-members come down one at a time — see **Removal** above.
+close but not finished: the cascade exists and works, and what it leaves behind
+is now measured rather than assumed — see **Removal** above and **Verifying
+it** below.
+
+## Verifying it
+
+```bash
+scripts/e2e-install-purge.sh            # the gate: nothing got worse
+scripts/e2e-install-purge.sh --strict   # the epic's DoD: an EMPTY post-purge diff
+```
+
+The epic's acceptance test, executable: install → inventory → purge → diff,
+driving the real `arc` verbs against this manifest inside a hermetic `$HOME`.
+Members are really cloned at their real pins and really installed; nothing is
+simulated. The script clones arc itself, so it depends on nothing outside this
+repo. See its header for how containment works and what it cannot contain.
+
+Three files, and the split between them is the point:
+
+| File | What it holds |
+|---|---|
+| [`scripts/e2e-install-purge.sh`](scripts/e2e-install-purge.sh) | the assertions |
+| [`scripts/known-residue.txt`](scripts/known-residue.txt) | every path that survives a purge today, classified, with an owner |
+| [`scripts/known-failures.txt`](scripts/known-failures.txt) | every assertion known to fail, with what is broken and who owns it |
+
+The default run gates on **regression** — anything surviving that is not
+already in those files turns the light red. The Definition of Done is stricter
+and is reported on every run whether or not it passes. Both files should only
+ever shrink; when they are empty, `--strict` goes green and that run is the
+epic's acceptance test passing. Until then, a green run means *nothing got
+worse*, not *the epic is done*, and the script says so.
+
+**Where that stands today**, on stock arc `main` at `7e3c17a`: the default gate
+is **green** — 26 assertions pass, 3 are known-waived. `--strict` is **red** on
+those same 3, and that is the honest reading, not a formality:
+
+| Assertion | Gap | Owner |
+|---|---|---|
+| `A5.8` | the DoD itself — 37 paths survive, per `known-residue.txt` | [cortex#2520](https://github.com/the-metafactory/cortex/issues/2520) |
+| `A6.3` | purge calls `launchctl` against the real login session | [cortex#2520](https://github.com/the-metafactory/cortex/issues/2520) |
+| `A1.5` | a declared member is recorded `preexisting` on a fresh machine | [arc#417](https://github.com/the-metafactory/arc/issues/417) |
+
+Closing `A5.8` is the epic's remaining work. Nothing here is blocked on arc any
+more.
+
+**Every detector has been watched failing.** `--inject-residue` plants leftover
+state after the purge and requires the detectors to catch it; `--check-stub`
+proves the `launchctl` interceptor bites; `--check-tripwire` drives the
+containment predicate over synthetic logs with known answers, including a
+prefix-sibling case that a previous version of it was blind to. All three run in
+CI on every pass, because a gate whose last observed failure was on somebody's
+laptop is a gate nobody should trust.
+
+The baseline files are enforced shrink-only in CI. Adding an entry needs the
+`baseline-growth` label — deliberately awkward, because the pressure to add one
+is highest exactly when someone is trying to turn a red build green.
+
+**One finding worth reading before you run it anywhere real.** Purging this
+factory issues `launchctl bootout gui/<uid> …` against your *actual* login
+session — cortex's `scripts.purge` hook enumerates plists under the redirected
+`$HOME` (contained) but boots them out of `gui/$(id -u)` (not contained), and
+`bootout` resolves the job by the label inside the plist. On a machine running
+cortex, that label is live. The harness's `launchctl` stub is what stops it,
+which makes the stub load-bearing rather than defensive. Details, and the fix,
+in `scripts/known-failures.txt` under A6.3.
 
 ## What's inside (ratified MVP)
 
