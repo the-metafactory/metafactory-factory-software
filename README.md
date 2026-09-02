@@ -5,11 +5,12 @@ composition. The tarball will carry no constituent code: an
 `arc-manifest.yaml` whose references point at published members, plus the
 tool checks and the `produces: software` capability declaration.
 
-**Status:** the manifest is here. arc implements the `factory` type
+**Status:** working. arc implements the `factory` type
 ([arc#400](https://github.com/the-metafactory/arc/issues/400) install,
 [arc#402](https://github.com/the-metafactory/arc/issues/402) publish
-validation), `arc validate .` is clean, and the composition installs — with
-one caveat, below. Design (ratified 2026-09-02):
+validation), `arc validate .` is clean, and all five members install from one
+command — verified 2026-09-02 into an isolated `$HOME`, with the real one
+byte-identical before and after. Design (ratified 2026-09-02):
 [arc `docs/design-factory-type.md`](https://github.com/the-metafactory/arc/blob/main/docs/design-factory-type.md)
 · concept anchor: [arc#365](https://github.com/the-metafactory/arc/issues/365).
 
@@ -30,12 +31,17 @@ yes; one bad member aborts all of it.
 shelf"), so members are addressed by git URL for now and the git URL above is
 the install path. Flipping to registry names is one line per member.
 
-**Two members cannot resolve yet.** `compass-core` 0.6.0 and `discord` 0.5.0
-are the ratified versions, and their repos declare them on `main`, but neither
-has cut a tag — so the composition refuses, loudly, having installed nothing.
-Cutting `compass-core v0.6.0` and `metafactory-bundle-discord v0.5.0` is the
-whole remaining gap; nothing in this repo changes when they land. The manifest
-explains itself, including why pinning the older tags instead would be worse.
+**What the review shows.** 48 capability lines and `Risk: HIGH (combined)` —
+which is a property of the *union*, not of any member: one member reaches the
+network, another writes to disk. It also flags that cortex's unrestricted bash
+makes the whole composition unrestricted, however careful the other members'
+allowlists are. Reading five separate installs would not tell you either
+thing. That is what the single review is for.
+
+**Removal is per-member for now.** `arc remove software-factory` takes down
+the factory record; the members come down individually. The composition-wide
+`files` / `upgrade` / `purge` cascade is
+[arc#401](https://github.com/the-metafactory/arc/issues/401), still open.
 
 ## The idea
 
@@ -56,13 +62,14 @@ install away").
 |---|---|---|
 | cortex | 6.13.3 | runtime |
 | metafactory-cortex-adapter-discord | 0.2.0 | surface |
-| compass-core | 0.6.0 ⏳ | governance — SOPs (plan-breakdown, dev loop, code review) + skills |
-| discord (skill) | 0.5.0 ⏳ | narration surface |
+| compass-core | 0.6.0 | governance — SOPs (plan-breakdown, dev loop, code review) + skills |
+| discord (skill) | 0.5.0 | narration surface |
 | code-review (skill) | 0.4.2 | the review lane |
 
-⏳ = the version is declared on the member's `main` but not yet tagged, so it
-cannot resolve. Pins are exact by design: a range would reintroduce the
-integration project this package type exists to delete.
+Pins are exact by design: a range would reintroduce the integration project
+this package type exists to delete. Every pin is cited to its release in the
+manifest. Installing cortex also pulls the adapters and renderers it declares
+as dependencies — four more packages, all shown in the one review.
 
 Optional tier: pilot-review-loop · art · agent-state · soma · luna-lite.
 

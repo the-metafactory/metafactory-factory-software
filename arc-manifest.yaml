@@ -55,40 +55,46 @@
 #
 #
 # ═══════════════════════════════════════════════════════════════════════════
-# TWO MEMBERS CANNOT BE INSTALLED TODAY — and that is deliberately visible
+# VERIFIED: all five members install, hermetically, 2026-09-02
 # ═══════════════════════════════════════════════════════════════════════════
 #
-# `compass-core` 0.6.0 and `discord` 0.5.0 are the versions the ratified MVP
-# names (epic #1 / `docs/design-factory-type.md` D8), and they are the
-# versions those repos' own manifests declare on `main` — but NEITHER repo has
-# cut a tag for them. arc resolves a `repo:` member by cloning at `v<version>`
-# then `<version>` (arc: `pinRefCandidates`), so both members refuse to
-# resolve, and the composition refuses as a whole, landing nothing.
+# `arc install` of this manifest into an isolated $HOME resolved all five
+# members, showed ONE combined review (48 capability lines, Risk: HIGH —
+# network ∧ write, with cortex's unrestricted bash infecting the whole
+# surface), landed every member at its exact pin, and recorded the composition
+# `status: complete`. The real $HOME was byte-identical before and after,
+# including the live launchd job table and the login keychain.
 #
-# That refusal is the correct behaviour and it is left in place. The three
-# alternatives were all worse:
+# TWO OF THESE PINS DID NOT RESOLVE WHEN THIS FILE WAS FIRST WRITTEN, and the
+# reasoning is kept because it is the reason the pins are what they are.
+# compass-core 0.6.0 and discord 0.5.0 were declared on their repos' `main`
+# but untagged, so both refused to resolve and the composition refused as a
+# whole, landing nothing. The tags were then cut (both releases dated
+# 2026-09-02) and the same manifest installed unchanged. The alternatives that
+# were rejected, and stay rejected:
 #
-#   * Pin compass-core to v0.4.3 (its newest actual tag). Rejected, and not
-#     merely because 0.4.3 predates the plan-breakdown skill the MVP exists to
-#     ship (compass-core#20/#22). At 0.4.3 `provides.templates` was still LIVE,
-#     and arc renders templates for `type: governance` into the consumer's CWD
-#     with a bare `Bun.write` — no existence check, no prompt, no backup (arc:
-#     src/lib/rules.ts, cited in compass-core's own manifest header). Pinning
-#     it would mean `arc install software-factory` OVERWRITES the operator's
-#     CLAUDE.md. A factory whose first act is to clobber a file is not a
-#     factory anyone should install.
-#   * Pin discord to 0.1.0 (the version recorded in the epic's stocktake).
-#     That number came from a local install off an untagged `main` at some
-#     earlier commit; it is not a release, and no tag will ever carry it.
-#     0.5.0 is what the repo declares today, so a `v0.5.0` tag cut from
-#     current `main` makes this manifest correct with no edit here.
-#   * Drop both from `references[]`. That silently ships a factory that is not
-#     the ratified factory.
+#   * Pin compass-core to v0.4.3 (its newest tag at the time). Rejected, and
+#     not merely because 0.4.3 predates the plan-breakdown skill the MVP
+#     exists to ship (compass-core#20/#22). At 0.4.3 `provides.templates` was
+#     still LIVE, and arc renders templates for `type: governance` into the
+#     consumer's CWD with a bare `Bun.write` — no existence check, no prompt,
+#     no backup (arc: src/lib/rules.ts, cited in compass-core's own manifest
+#     header). Pinning it would have meant `arc install software-factory`
+#     OVERWRITES the operator's CLAUDE.md. A factory whose first act is to
+#     clobber a file is not a factory anyone should install. The hermetic run
+#     confirms 0.6.0 was the right call: it lands `~/.claude/skills/Governance`
+#     AND `~/.claude/skills/plan-breakdown`, which is the MVP's whole point.
+#   * Pin discord to 0.1.0 (the version in epic #1's stocktake). That number
+#     came from a local install off an untagged `main` at an older commit; it
+#     is not a release and no tag carries it. 0.5.0 was what the repo declared,
+#     so cutting `v0.5.0` from `main` made this manifest correct with no edit.
+#   * Drop either from `references[]`. That silently ships a factory that is
+#     not the ratified factory.
 #
-# So: the manifest declares the ratified composition, and the missing tags are
-# reported as what they are — a release gap in two member repos, not a defect
-# in this file. Cutting `compass-core v0.6.0` and `metafactory-bundle-discord
-# v0.5.0` is the entire remaining work; nothing here changes when they land.
+# The general rule this leaves behind: when a member's release lags the
+# ratified pin, the pin stays ratified and the composition refuses loudly.
+# A refusal is a release gap in a member repo; a downgrade is a lie in this
+# file.
 
 schema: arc/v1
 
@@ -118,11 +124,11 @@ description: >-
   skills. Ships no code of its own: every member is a published package,
   pinned to an exact version.
 
-# The repo carries no LICENSE file yet. MIT is the ecosystem's licence for
+# Backed by the LICENSE file in this repo. MIT is the ecosystem's licence for
 # packages that ship no code (compass-core, code-review and the discord bundle
 # are all MIT; cortex is AGPL-3.0-only precisely because it ships code, and
-# this package ships none). Adding the LICENSE file is a follow-up — flagged
-# here rather than left as an unbacked claim.
+# this package ships none — its members carry their own licences, which this
+# declaration does not and cannot override).
 license: MIT
 
 author:
@@ -178,13 +184,25 @@ produces: software
 # the block optional for compositions; arc#400 made declaring one an error.
 #
 # The real surface is computed at install from the members' own manifests and
-# shown ONCE, attributed line by line, with nothing summarised away (D2). It
-# will be large: cortex alone declares network reach to discord.com and
-# api.anthropic.com plus writes under ~/.config, ~/.local and the platform
-# service dirs, and compass-core declares restricted bash. Expect the combined
-# risk to render HIGH (network ∧ write). That is the true reading of what
-# installing this factory does, and the point of the single review is that an
-# operator sees it in one place instead of five.
+# shown ONCE, attributed line by line, with nothing summarised away (D2).
+# MEASURED on the 2026-09-02 hermetic run: 48 lines — 8 reads, 12 writes, 10
+# network hosts, 9 bash grants, 8 secrets — and `Risk: HIGH (combined)`.
+#
+# Two things in that review only a COMBINED one can tell you, and both are the
+# argument for this design:
+#
+#   * HIGH is a property of the UNION, not of any member. arc's rule is
+#     network ∧ write → high (arc: `combinedRisk`). No member is installed
+#     "as high risk"; the composition is, because one member reaches the
+#     network and another writes to disk.
+#   * `🔴 Bash: unrestricted [cortex] — one member with unrestricted bash makes
+#     the WHOLE composition unrestricted`. compass-core's and code-review's
+#     careful `gh pr *` / `git *` allowlists are still shown, and are still
+#     true of those packages, but they do not constrain the composition. An
+#     operator reading five separate installs could easily miss that.
+#
+# That is the true reading of what installing this factory does, and the point
+# of the single review is that an operator sees it in one place instead of five.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # tools: — host binaries, checked BEFORE anything is fetched
@@ -299,12 +317,16 @@ references:
 
   # GOVERNANCE. Drops the governance + plan-breakdown skills and the
   # governance subagent into ~/.claude via `provides.files`.
-  # PIN NOT YET CITEABLE — NO TAG EXISTS. 0.6.0 is what compass-core's
-  # arc-manifest.yaml declares on `main` (commit 0e42b1e, "feat: ship the
-  # plan-breakdown skill front-end with the SOP it fronts (#20) (#22)") and
-  # what epic #1 ratified, but the newest tag in the repo is v0.4.3. This
-  # member refuses to resolve until `v0.6.0` is cut. See the header note for
-  # why pinning v0.4.3 instead would be actively harmful.
+  # PIN CITED: release "compass-core v0.6.0 — the process installs with the
+  # factory", tagged v0.6.0, 2026-09-02 —
+  # https://github.com/the-metafactory/compass-core/releases/tag/v0.6.0
+  # Tag verified on the remote at `main` HEAD 0e42b1e ("feat: ship the
+  # plan-breakdown skill front-end with the SOP it fronts (#20) (#22)");
+  # arc-manifest.yaml at v0.6.0 declares `version: 0.6.0`, `type: governance`,
+  # `tier: official`. Confirmed at install: lands the Governance AND
+  # plan-breakdown skills plus the governance subagent via provides.files.
+  # (This tag was cut in response to this manifest; the pin never moved. See
+  # the header for why v0.4.3 was refused as a substitute.)
   #
   # SECOND, SEPARATE ISSUE, recorded so it is not rediscovered: compass-core's
   # manifest declares `name: "@the-metafactory/compass-core"`, a scoped string
@@ -320,12 +342,15 @@ references:
 
   # NARRATION SURFACE. The `discord` CLI + skills bundle extracted from cortex
   # per ADR-0017 (the live adapter stays in cortex; this is the tooling).
-  # PIN NOT YET CITEABLE — THE REPO HAS NO TAGS AT ALL. 0.5.0 is what
-  # metafactory-bundle-discord's arc-manifest.yaml declares on `main`. Epic
-  # #1's stocktake records "discord skill (0.1.0)", which is a LOCAL install
-  # off an untagged `main` at an older commit, not a release — pinning it
-  # would pin to a version nothing will ever carry. This member refuses to
-  # resolve until `v0.5.0` is cut.
+  # PIN CITED: release "discord bundle v0.5.0 — first release", tagged v0.5.0,
+  # 2026-09-02 — the repo's FIRST tag ever, at `main` HEAD:
+  # https://github.com/the-metafactory/metafactory-bundle-discord/releases/tag/v0.5.0
+  # Tag verified on the remote; arc-manifest.yaml at v0.5.0 declares
+  # `name: discord`, `version: 0.5.0`, `type: skill`, `tier: custom`.
+  # Confirmed at install: lands ~/bin/discord plus the Discord and FleetAdmit
+  # skills. Epic #1's stocktake records "discord skill (0.1.0)" — that was a
+  # LOCAL install off an untagged `main` at an older commit, not a release, and
+  # no tag carries it; 0.5.0 is the released version and the one pinned here.
   #
   # REPO RENAME, noted so a stale URL is not reintroduced: this repo was
   # `metafactory-discord` (the URL every existing local install still records)
