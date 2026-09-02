@@ -67,6 +67,10 @@
 #   scripts/e2e-install-purge.sh --strict         # the DoD: require an EMPTY diff
 #   scripts/e2e-install-purge.sh --inject-residue # fault-inject; MUST go RED
 #   scripts/e2e-install-purge.sh --check-stub     # prove the launchctl stub bites
+#
+# The two injection modes INVERT the exit code: they exit 0 when the detector
+# they target fired, and they judge only that detector — not the gate's overall
+# result, which may be red for unrelated reasons.
 #   scripts/e2e-install-purge.sh --keep           # leave $WORKDIR for inspection
 #
 # The default gate fails on any regression — anything surviving the purge that
@@ -1337,15 +1341,52 @@ if [ "${FAIL_COUNT}" -gt 0 ]; then
   say ""
 fi
 
-# The injection modes invert the meaning of the result: there, red is the pass.
+# ── The injection modes: red is the pass, and it must be the RIGHT red ───────
+#
+# Both modes are asked about SPECIFIC assertions, never about "did anything
+# fail". The distinction matters more than it looks: while the environment is
+# red for unrelated reasons — as it is today, with arc's purge crashing — a
+# "some gating assertion fired" test passes without the injection having been
+# detected at all. That is a detector proof that proves nothing, in exactly the
+# circumstances where you most need it to mean something.
+failed_id() {
+  local entry
+  for entry in ${FAILURES[@]+"${FAILURES[@]}"}; do
+    if [ "${entry%%:*}" = "$1" ]; then return 0; fi
+  done
+  return 1
+}
+
 if [ "${INJECT_RESIDUE}" -eq 1 ]; then
-  if [ "${GATING_FAILURES}" -eq 0 ]; then
-    say "   ❌ INJECTION FAILED — residue was planted and the gate stayed GREEN."
-    say "      The detectors are blind. Fix the harness before trusting a green run."
+  # The planted files are a leftover Governance skill (which A5.3 checks by
+  # name) and an orphaned cortex state file (which only the independent
+  # filesystem diff, A5.9, can see). Both must fire.
+  MISSED=""
+  failed_id A5.3 || MISSED="${MISSED}A5.3 (drop-absence check) "
+  failed_id A5.9 || MISSED="${MISSED}A5.9 (independent filesystem diff) "
+  if [ -n "${MISSED}" ]; then
+    say "   ❌ INJECTION FAILED — residue was planted and these detectors did NOT fire:"
+    say "        ${MISSED}"
+    say "      Fix the harness before trusting any green run from it."
     exit 1
   fi
-  say "   ✅ INJECTION OBSERVED RED — ${GATING_FAILURES} gating assertion(s) fired on"
-  say "      planted residue. The detectors are not decorative."
+  say "   ✅ INJECTION OBSERVED RED — A5.3 and A5.9 both fired on planted residue."
+  say "      The detectors are not decorative."
+  exit 0
+fi
+
+if [ "${CHECK_STUB}" -eq 1 ]; then
+  # Governed by S1/S2 alone, for the same reason: this mode asks one question —
+  # does the launchctl interceptor still bite? — and the answer must not be
+  # coloured by whatever else is broken in the composition today.
+  if failed_id S1 || failed_id S2; then
+    say "   ❌ STUB CHECK FAILED — launchctl was invoked through the hermetic PATH and"
+    say "      the interceptor did not record it. The stub is the only thing standing"
+    say "      between this harness and the operator's live launchd session."
+    exit 1
+  fi
+  say "   ✅ STUB CHECK PASSED — the interceptor logged the call and A6.3's rule flagged it."
+  say "      (The gate's own result is not judged in this mode; run without --check-stub.)"
   exit 0
 fi
 
