@@ -38,6 +38,9 @@ makes the whole composition unrestricted, however careful the other members'
 allowlists are. Reading five separate installs would not tell you either
 thing. That is what the single review is for.
 
+It covers the five declared members. It does **not** cover what those members
+pull in through their own `depends_on` — see the note under the member table.
+
 **Removal is per-member for now.** `arc remove software-factory` takes down
 the factory record; the members come down individually. The composition-wide
 `files` / `upgrade` / `purge` cascade is
@@ -51,6 +54,11 @@ Declare the factory as a manifest, publish it to the registry,
 `arc install software-factory` on a fresh machine — one command, one
 combined capability review, reversible with `arc purge`. The Nth factory
 costs a declaration, not an integration project.
+
+That is the design. Today the install half is real and the reverse half is
+partial: `arc purge` does not yet cascade across a composition
+([arc#401](https://github.com/the-metafactory/arc/issues/401), open), so
+members come down one at a time — see **Removal** above.
 
 ## What's inside (ratified MVP)
 
@@ -68,8 +76,19 @@ install away").
 
 Pins are exact by design: a range would reintroduce the integration project
 this package type exists to delete. Every pin is cited to its release in the
-manifest. Installing cortex also pulls the adapters and renderers it declares
-as dependencies — four more packages, all shown in the one review.
+manifest.
+
+**Five members, nine packages — and the gap is real.** Installing cortex also
+pulls the four adapters and renderers it declares in its own
+`depends_on.packages`: mattermost, slack, web, pagerduty. Those four are
+**not** in the combined review, contribute no capability line to it, and land
+**unpinned**, under cortex's cascade with consent already granted. So the one
+review covers the five members this manifest declares — not everything the
+install puts on your machine. That is
+[arc#410](https://github.com/the-metafactory/arc/issues/410), open: *the
+composition review does not cover members' `depends_on` cascades — packages
+land unreviewed and unpinned under `yes: true`*. Until it closes, read the
+review as the floor of what installs, not the ceiling.
 
 Optional tier: pilot-review-loop · art · agent-state · soma · luna-lite.
 

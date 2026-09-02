@@ -73,17 +73,26 @@
 # 2026-09-02) and the same manifest installed unchanged. The alternatives that
 # were rejected, and stay rejected:
 #
-#   * Pin compass-core to v0.4.3 (its newest tag at the time). Rejected, and
-#     not merely because 0.4.3 predates the plan-breakdown skill the MVP
-#     exists to ship (compass-core#20/#22). At 0.4.3 `provides.templates` was
-#     still LIVE, and arc renders templates for `type: governance` into the
-#     consumer's CWD with a bare `Bun.write` — no existence check, no prompt,
-#     no backup (arc: src/lib/rules.ts, cited in compass-core's own manifest
-#     header). Pinning it would have meant `arc install software-factory`
-#     OVERWRITES the operator's CLAUDE.md. A factory whose first act is to
-#     clobber a file is not a factory anyone should install. The hermetic run
-#     confirms 0.6.0 was the right call: it lands `~/.claude/skills/Governance`
-#     AND `~/.claude/skills/plan-breakdown`, which is the MVP's whole point.
+#   * Pin compass-core to v0.4.3 (its newest tag at the time). REJECTED, and
+#     the primary reason is sufficient on its own: 0.4.3 predates the
+#     plan-breakdown skill the MVP exists to ship (compass-core#20/#22). The
+#     hermetic run confirms the call — 0.6.0 lands
+#     `~/.claude/skills/Governance` AND `~/.claude/skills/plan-breakdown`,
+#     which is the whole point of including compass-core at all.
+#
+#     There is a secondary hazard, stated precisely because an earlier draft
+#     of this comment overstated it. At 0.4.3 `provides.templates` was still
+#     LIVE, and arc renders templates for `type: governance` into the
+#     consumer's CWD, finishing with a bare `Bun.write` — no existence check,
+#     no prompt, no backup (arc: src/lib/rules.ts `generateSingleRule` step 8).
+#     But that write is only REACHED when the CWD already contains the
+#     template's declared config file (`compass.config.yaml`): step 1 reads it
+#     first and returns `Config file not found` without writing when it is
+#     absent. So the clobber is real for an operator installing from inside a
+#     compass-governed repo, and is a template ERROR — not a clobber — on a
+#     fresh machine or any other CWD. Narrower than "it overwrites your
+#     CLAUDE.md", still not something to ship inside a factory, and not needed
+#     to carry the rejection.
 #   * Pin discord to 0.1.0 (the version in epic #1's stocktake). That number
 #     came from a local install off an untagged `main` at an older commit; it
 #     is not a release and no tag carries it. 0.5.0 was what the repo declared,
@@ -220,23 +229,29 @@ produces: software
 # sits on. Read at v6.13.3, cortex documents its external dependencies in
 # exactly one table — `docs/design-test-rig.md` §"Prerequisites (external
 # dependencies)" — corroborated by CONTRIBUTING.md §Prerequisites and
-# README-AGENTS.md §1. That table names a version for Bun and for nothing
-# else:
+# README-AGENTS.md §1. Reproduced in full, no rows elided:
 #
-#   | macOS or Linux | OS                              | Everything          |
-#   | Git            | `brew install git` or apt       | Everything          |
-#   | Bun >= 1.1     | `curl -fsSL https://bun.sh/…`   | All CLI tools       |
-#   | Node.js >= 20  | `brew install node` or via Bun  | Claude Code         |
-#   | gh CLI         | `brew install gh`               | GitHub operations   |
+#   | Tool           | Install method                  | Required by          |
+#   | macOS or Linux | OS                              | Everything           |
+#   | Git            | `brew install git` or apt       | Everything           |
+#   | Bun >= 1.1     | `curl -fsSL https://bun.sh/…`   | All CLI tools        |
+#   | Node.js >= 20  | `brew install node` or via Bun  | Claude Code          |
+#   | Claude Code    | `npm i -g @anthropic-ai/…`      | Grove hooks, sessions|
+#   | gh CLI         | `brew install gh`               | GitHub operations    |
 #
-# So `bun` carries a floor and `git` / `gh` carry none. They are declared here
-# WITHOUT a `version:` rather than with an invented one. arc enforces a
-# declared floor strictly when it can read the binary's version (arc:
-# `checkTools`), so a made-up number is not decoration — it is a refusal
-# arc would issue on a host that satisfies everything cortex actually asks
-# for. A false refusal on a security gate is how operators learn to reach for
-# `--yes`. If cortex later documents a git or gh floor, it belongs here, cited
-# the same way.
+# The table names floors for TWO tools — Bun and Node.js. Of the three tools
+# declared HERE, only `bun` is one of them; `git` and `gh` appear with no
+# version. (Node.js is not declared in this `tools:` block at all: it is
+# required by Claude Code, which is the operator's substrate choice, not
+# something this composition installs or drives.)
+#
+# So `git` and `gh` are declared WITHOUT a `version:` rather than with an
+# invented one. arc enforces a declared floor strictly when it can read the
+# binary's version (arc: `checkTools`), so a made-up number is not decoration
+# — it is a refusal arc would issue on a host that satisfies everything cortex
+# actually asks for. A false refusal on a security gate is how operators learn
+# to reach for `--yes`. If cortex later documents a git or gh floor, it belongs
+# here, cited the same way.
 tools:
   - name: git
     # No floor: cortex documents Git as required for "Everything" and names no
