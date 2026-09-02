@@ -135,9 +135,16 @@ prefix-sibling case that a previous version of it was blind to. All three run in
 CI on every pass, because a gate whose last observed failure was on somebody's
 laptop is a gate nobody should trust.
 
-The baseline files are enforced shrink-only in CI. Adding an entry needs the
-`baseline-growth` label — deliberately awkward, because the pressure to add one
-is highest exactly when someone is trying to turn a red build green.
+The baseline files are enforced shrink-only in CI by
+[`scripts/check-baseline-shrink.sh`](scripts/check-baseline-shrink.sh) — run it
+locally, and run `--self-test` to check the guard itself. Adding an entry needs
+the `baseline-growth` label: deliberately awkward, because the pressure to add
+one is highest exactly when someone is trying to turn a red build green.
+
+A file that does not exist at the comparison base is being *introduced*, not
+grown, and the guard says so instead of failing. Getting that wrong is what let
+a guard failure skip the gate entirely on one merge to `main`; the judgement
+steps now run **after** the harness for the same reason.
 
 **One finding worth reading before you run it anywhere real.** Purging this
 factory issues `launchctl bootout gui/<uid> …` against your *actual* login
