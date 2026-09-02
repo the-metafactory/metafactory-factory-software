@@ -122,3 +122,30 @@
 # rest of this file is gone.
 # ─────────────────────────────────────────────────────────────────────────────
 ./.claude/settings.json
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLASS 4 — the gh CLI's own state. ENVIRONMENT-CONDITIONAL; read this before
+# deleting it as stale.
+#
+# `gh` is declared in this manifest's `tools:` block, and compass-core and
+# code-review both shell out to it. gh writes a telemetry device-id under
+# XDG_STATE_HOME the first time a member actually invokes it, so the file is
+# created by the composition USING a host tool, not by the composition
+# installing anything. Nothing purges it because nothing owns it.
+#
+# WHY IT MAY SHOW AS STALE, AND WHY THAT IS NOT A REASON TO DELETE IT: on a
+# developer machine where gh has run before, the redirected XDG_STATE_HOME is
+# still fresh but the harness's baseline is taken after a warm-up, and the
+# device-id happens to land before it — so these paths never appear in the diff
+# and the harness reports the entry as stale. On a fresh CI runner they do
+# appear, and without this entry A5.9 goes red on them. The entry is therefore
+# correct on one machine and stale on another, which is unusual enough to say
+# out loud rather than let someone "tidy" it away and rediscover it in CI.
+#
+# OWNER: nobody — it is the measuring environment's trace, the same category as
+# the bun caches the harness excludes wholesale under ./.cache. It sits here
+# rather than in that exclusion only because it lives under .local/state, where
+# cortex's real state also lives and must stay visible.
+# ─────────────────────────────────────────────────────────────────────────────
+./.local/state/gh
+./.local/state/gh/device-id

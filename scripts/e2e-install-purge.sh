@@ -1227,11 +1227,34 @@ fi
 # evidence. A6.4 is the tripwire for the strictly worse case: a call naming a
 # REAL $HOME path, which would mean containment failed before launchd was even
 # reached. It is gating in every mode and appears in no waiver file.
+# HOW THE CHECK IS WRITTEN, AND THE BUG IT IS WRITTEN AGAINST. The first version
+# of this asked "does the call mention $REAL_HOME?", which is a SUBSTRING test
+# where a CONTAINMENT test was needed. It passed locally and failed on every
+# GitHub runner, because a runner's temp dir lives INSIDE the home directory:
+#
+#   HOME=/Users/runner   WORKDIR=/Users/runner/work/_temp/e2e
+#
+# so every perfectly-contained workspace path contains $REAL_HOME as a prefix
+# and the tripwire fired on all of them. A tripwire that cries wolf on every run
+# is worse than no tripwire — it is the exact failure this harness's whole
+# waiver design exists to prevent, and it happened here.
+#
+# The fix is to subtract before testing: strip every workspace path token from
+# the log, THEN look for a real-$HOME path in what is left. Correct whether or
+# not the workspace happens to sit under the home directory. Both the logical
+# and the symlink-resolved spellings of the workspace are stripped, since macOS
+# hands out /tmp and /private/tmp for the same directory.
+WORKDIR_REAL="$(cd "${WORKDIR}" && pwd -P)"
+SCRUBBED="${LOGS}/stub-calls-outside-workspace.txt"
+sed -e "s|${WORKDIR}[^[:space:]]*||g" -e "s|${WORKDIR_REAL}[^[:space:]]*||g" \
+  "${STUB_LOG}" > "${SCRUBBED}"
+
 if [ "${STUB_CALLS}" -eq 0 ]; then
   pass A6.4 "no call to check (none attempted)"
-elif grep -qF "${REAL_HOME}/" "${STUB_LOG}"; then
-  fail A6.4 "a service-manager call named a path in the REAL \$HOME — containment failed upstream of launchd"
-  grep -F "${REAL_HOME}/" "${STUB_LOG}" > "${LOGS}/real-home-calls.txt" || true
+elif grep -qF "${REAL_HOME}/" "${SCRUBBED}"; then
+  fail A6.4 "a service-manager call named a path in the REAL \$HOME, outside the workspace — containment failed upstream of launchd"
+  grep -nF "${REAL_HOME}/" "${SCRUBBED}" > "${LOGS}/real-home-calls.txt" || true
+  info "offending call(s), with workspace paths blanked out so what is left is the problem:"
   while IFS= read -r line; do info "  ${line}"; done < "${LOGS}/real-home-calls.txt"
 else
   pass A6.4 "every intercepted call named only workspace paths (the stub, not the path, is what kept the real session safe)"
