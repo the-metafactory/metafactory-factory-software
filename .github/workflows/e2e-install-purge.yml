@@ -1,0 +1,167 @@
+name: E2E install → purge
+
+# The epic's acceptance test, run by a machine. See scripts/e2e-install-purge.sh
+# for what it asserts and why.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHY macOS, AND WHY ONLY macOS — the platform split, stated honestly
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# The harness is portable in its mechanics: bun, git and gh are all present on
+# both runner images, every member repo is PUBLIC (verified: arc, cortex,
+# compass-core, metafactory-cortex-adapter-discord, metafactory-bundle-discord,
+# metafactory-skill-code-review are all `PUBLIC`), so no token is needed to
+# clone any of them, and the harness stubs BOTH launchctl and systemctl. It
+# would start on ubuntu-latest.
+#
+# It is not wired on Linux anyway, for one reason: the residue baseline is a
+# MEASUREMENT, and it has only been measured on macOS.
+#
+# cortex's postinstall branches on `uname` (cortex scripts/postinstall.sh §4):
+# Darwin renders launchd plists into ~/Library/LaunchAgents, Linux renders
+# systemd user units into ~/.config/systemd/user. Those are different files in
+# different places, so a Linux run produces a DIFFERENT set of surviving paths
+# than the 37 recorded in scripts/known-residue.txt — and A5.9 compares against
+# that file. A Linux job would go red on paths nobody has looked at, mixed in
+# with paths that are genuinely fine, which is worse than no Linux job at all.
+#
+# Writing a Linux baseline without having run it once is the definition of
+# faking a green CI, so it is not done here. The honest sequence for adding one
+# is: run the harness manually on a Linux host, read every surviving path,
+# classify it, and add a `known-residue.linux.txt` in a PR that shows the run.
+#
+# macOS is also where the hazard actually lives. The harness proved that
+# cortex's postinstall issues `launchctl bootout gui/<uid> …` against the real
+# login session (see scripts/known-failures.txt, A6.3). A macOS runner has a
+# launchd session, so this job exercises that path for real — on a throwaway
+# machine, behind the stub, which is exactly where you want to exercise it.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# THIS JOB IS RED TODAY, DELIBERATELY
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Against arc `main` at d5cda26, `arc purge software-factory` throws:
+#
+#   error: invalid agent name "@the-metafactory/compass-core":
+#          expected a package-name slug ([A-Za-z0-9_][A-Za-z0-9_-]*)
+#     at assertAgentName (src/lib/secrets.ts:136)
+#     at new FileBackend (src/lib/secrets.ts:339)
+#     at clearSecrets  (src/commands/purge.ts:749)
+#     at purgeComposition (src/commands/purge.ts:462)
+#
+# Both secret backends validate the package name in their CONSTRUCTOR, and that
+# construction sits OUTSIDE the try/catch in clearSecrets, so a scoped member
+# name aborts the whole composition cascade and leaves the machine half-purged.
+# compass-core's manifest declares exactly such a name, deliberately (its own
+# header records it as a known arc/v1 violation left unfixed because renaming
+# would orphan every install on disk).
+#
+# There is no `continue-on-error:` on this job and there will not be one. A gate
+# that reports green over a purge that crashes is worse than no gate. The job
+# goes green when arc is fixed, and the harness's own logs are the fix's
+# acceptance test.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  pull_request:
+    branches: [main]
+  # Runs on the feature branch too, so the wiring can be verified before a PR
+  # exists rather than discovered to be broken by the PR that needs it.
+  push:
+    branches: [main, "feat/**"]
+  workflow_dispatch:
+    inputs:
+      arc_ref:
+        description: "arc ref to test against (branch, tag or SHA)"
+        required: false
+        default: "main"
+      strict:
+        description: "Require the epic's DoD: an EMPTY post-purge diff, no waivers"
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: install → inventory → purge → diff (macOS)
+    runs-on: macos-latest
+    # Fourteen git clones (arc, five declared members, cortex's four cascade
+    # dependencies) plus a `bun install` in each. Measured ~2 min locally with a
+    # warm cache; the cap is generous because a cold runner has none, and the
+    # failure mode of a too-tight timeout is a flaky gate.
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "latest"
+
+      # The manifest declares git, gh and bun in `tools:`, and arc checks that
+      # block BEFORE fetching a byte. Proving the runner satisfies it here means
+      # a missing tool reads as "the runner is wrong" rather than as a
+      # mysterious install failure forty lines into the harness output.
+      - name: Verify the manifest's declared host tools
+        run: |
+          set -euo pipefail
+          for t in git gh bun; do
+            command -v "$t" >/dev/null || { echo "::error::$t is not on PATH"; exit 1; }
+            echo "$t: $(command -v "$t")"
+          done
+          bun --version
+
+      - name: shellcheck
+        run: |
+          brew install shellcheck
+          shellcheck -S style scripts/e2e-install-purge.sh
+
+      # The harness clones arc itself, so nothing here depends on a checkout
+      # this workflow arranged. ARC_REF is what makes `workflow_dispatch`
+      # useful for testing a fix branch before it merges.
+      - name: E2E install → purge
+        env:
+          ARC_REF: ${{ github.event.inputs.arc_ref || 'main' }}
+        run: |
+          set -euo pipefail
+          args=(--keep --workdir "${RUNNER_TEMP}/e2e")
+          if [ "${{ github.event.inputs.strict }}" = "true" ]; then
+            args+=(--strict)
+          fi
+          ./scripts/e2e-install-purge.sh "${args[@]}"
+
+      # The detector proof, run on every CI pass for the same reason it exists
+      # at all: a gate nobody has watched fail is a gate nobody should trust,
+      # and that includes a gate whose LAST observed failure was on a laptop
+      # months ago. Residue is planted after the purge and the run must go red;
+      # the script exits 0 only when it did.
+      - name: Fault-inject the detector (must observe RED)
+        run: ./scripts/e2e-install-purge.sh --inject-residue --workdir "${RUNNER_TEMP}/e2e-inject"
+
+      # Same argument, applied to the launchctl stub — the one detector whose
+      # healthy state is an EMPTY log, and therefore the one that could be
+      # broken for months without anyone noticing.
+      - name: Fault-inject the service-manager stub (must be intercepted)
+        run: ./scripts/e2e-install-purge.sh --check-stub --workdir "${RUNNER_TEMP}/e2e-stub"
+
+      # Uploaded unconditionally: the run that FAILS is the one whose logs are
+      # worth reading, and a failed job that discards its evidence has to be
+      # re-run to learn anything.
+      - name: Upload harness logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          retention-days: 14
+          # The workspace also holds ~17k bun-cache files and the cloned member
+          # repos; only the logs are wanted.
+          path: |
+            ${{ runner.temp }}/e2e/logs/
+            ${{ runner.temp }}/e2e/service-manager-calls.log
+            ${{ runner.temp }}/e2e-inject/logs/
+            ${{ runner.temp }}/e2e-stub/logs/

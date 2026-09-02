@@ -1,0 +1,116 @@
+# known-residue.txt — every path that survives `arc purge software-factory`
+# today, itemised, with a reason and an owner.
+#
+# WHAT THIS FILE IS FOR
+#
+# The epic's Definition of Done is an EMPTY post-purge filesystem diff. It is
+# not met yet. This file is the difference between "not met" and "not looked
+# at": every path below has been read, classified, and attributed to whoever can
+# actually fix it. scripts/e2e-install-purge.sh gates on it — a path that
+# survives and is NOT listed here turns the light red (A5.9), while the DoD
+# itself (A5.8) is reported on every run whether or not it passes.
+#
+# THIS FILE SHOULD ONLY EVER SHRINK. Adding a line is admitting a new leak, and
+# should happen in a PR that says why. When it reaches zero, run the harness
+# with --strict: that run is the epic's acceptance test finally passing.
+#
+# Paths are relative to the hermetic $HOME, exactly as `find .` prints them.
+# `#` starts a comment; blank lines are ignored. Only ./.cache is excluded
+# ahead of this file (a cache is discardable by definition — see the harness).
+#
+# Recorded from a full five-member install/purge cycle, 2026-09-02, against
+# arc d5cda26 (#411) and this repo's arc-manifest.yaml at a74617e.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLASS 1 — arc's own directory skeleton.
+#
+# `ensureDirectories` (arc: src/lib/paths.ts) creates these on EVERY install and
+# drops a .gitkeep in each; purge never removes them. Defensible as-is: these
+# are shared host directories arc does not exclusively own (deleting
+# ~/.claude/skills because one skill was purged would be destructive), and the
+# .gitkeep files are inert. Listed rather than pattern-excluded so a reader can
+# disagree with that judgement.
+#
+# OWNER: arc. Not a blocker for this factory.
+#
+# Note the shape of the repos/ entry: only the DIRECTORY and its .gitkeep are
+# baselined. Every member's cloned tree lives under it, so a repo that survived
+# the purge would appear as unbaselined paths and turn A5.9 red. The empty
+# directory is excused; anything inside it is not.
+# ─────────────────────────────────────────────────────────────────────────────
+./.claude
+./.claude/agents
+./.claude/agents/.gitkeep
+./.claude/bin
+./.claude/bin/.gitkeep
+./.claude/commands
+./.claude/commands/.gitkeep
+./.claude/skills
+./.claude/skills/.gitkeep
+./.config
+./.config/metafactory
+./.config/metafactory/arc
+./.config/metafactory/arc/.gitkeep
+./.config/metafactory/arc/actions
+./.config/metafactory/arc/actions/.gitkeep
+./.config/metafactory/arc/pipelines
+./.config/metafactory/arc/pipelines/.gitkeep
+./.config/metafactory/arc/secrets
+./.config/metafactory/arc/secrets/.gitkeep
+./.config/metafactory/arc/skills
+./.config/metafactory/arc/skills/.gitkeep
+./.local/bin
+./.local/share/metafactory/arc/repos
+./.local/share/metafactory/arc/repos/.gitkeep
+./bin
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLASS 2 — cortex's postinstall, outside D6's reach BY CONSTRUCTION.
+#
+# THIS IS THE REAL GAP, and it is the one that matters to the epic.
+#
+# cortex's scripts/postinstall.sh creates runtime directories and conditionally
+# copies a relay policy template. None of it is declared in cortex's `owns:`
+# block, and `arc purge` only deletes what a package DECLARES it owns — so
+# `untangle: CLEAN` is printed truthfully while all of this is still on disk.
+# arc names this failure mode itself: docs/design-factory-type.md, arc#401
+# residual risk (c), "a package that writes outside everything it declares is
+# outside D6's reach by construction".
+#
+# The fix is cortex-side and small: declare these under `owns.state` /
+# `owns.config` in cortex's arc-manifest.yaml, at which point purge deletes them
+# and D6 verifies it. relay-policy.yaml is the one judgement call — it is a
+# template copied only when absent, so it is arguably `owns.userData` (kept, but
+# then NAMED in the refusal line, which is the honest outcome either way).
+#
+# OWNER: cortex. This is the line item that keeps the epic's DoD from passing.
+# ─────────────────────────────────────────────────────────────────────────────
+./.claude/events
+./.claude/events/published
+./.claude/events/raw
+./.claude/hooks
+./.claude/logs
+./.claude/relay
+./.claude/relay/relay-policy.yaml
+./.local/state
+./.local/state/metafactory
+./Library
+./Library/LaunchAgents
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLASS 3 — settings.json, deliberately never deleted.
+#
+# arc registers a package's Claude Code hooks INTO ~/.claude/settings.json and
+# removes only that package's entries at purge, keyed on the `_arc_pkg` tag
+# (arc: src/lib/hooks.ts). The file itself is the operator's, shared with every
+# other tool that writes to it, so arc will not delete it — correctly.
+#
+# The harness therefore checks the file's CONTENT the only way that matters:
+# arc's own D6 verdict re-reads settings.json by that tag and reports a
+# surviving hook registration as residue (A4.2 asserts CLEAN). A leftover hook
+# would fail there even though the file is baselined here.
+#
+# OWNER: nobody — this is correct behaviour, and it will still be here when the
+# rest of this file is gone.
+# ─────────────────────────────────────────────────────────────────────────────
+./.claude/settings.json

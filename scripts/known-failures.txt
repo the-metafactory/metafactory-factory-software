@@ -1,0 +1,126 @@
+# known-failures.txt — assertions in scripts/e2e-install-purge.sh that are
+# KNOWN to fail, with what is broken and who owns it.
+#
+# An id listed here is still run, still reported, and still printed in the
+# summary. It just does not turn the light red, because it is not news.
+#
+# WHY THIS FILE EXISTS. The first honest run of this harness found real defects
+# in two of the five member packages. If each one makes the gate red forever,
+# the gate gets ignored, and the next defect — the one nobody has looked at —
+# arrives invisible. This file is the line between "known and owned" and
+# "unknown".
+#
+# RULES
+#   * Every entry names an owner and cites evidence. An entry without one is
+#     not a waiver, it is a shrug.
+#   * This file should only ever SHRINK. Adding an id is admitting a new defect
+#     and belongs in a PR that says so.
+#   * `--strict` ignores this file entirely. That is the run that proves the
+#     epic's acceptance test passes.
+#   * A6.4 may never be listed here; the harness refuses to start if it is.
+#
+# Format: one assertion id per line. `#` comments, blank lines ignored.
+# Recorded 2026-09-02 against arc d5cda26 (#411), manifest at a74617e.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# A1.5 — a declared member is recorded as `preexisting`, not `landed`.
+#
+# WHAT: metafactory-cortex-adapter-discord is a DECLARED member of this factory,
+# and on a completely fresh hermetic $HOME arc records it with
+# `state: preexisting` — "already installed before this composition; the
+# composition did not put it here". That is false. It is there because cortex's
+# own `depends_on` cascade installed it moments earlier, inside this very
+# install.
+#
+# WHY IT IS WAIVED RATHER THAN GATING: measured, the member does still leave.
+# But read how narrowly. arc's own purge report says, in as many words:
+#
+#   members purged: code-review, discord, @the-metafactory/compass-core, cortex
+#   kept (still referenced): metafactory-cortex-adapter-discord — cortex
+#     (depends_on.packages); already installed before 'software-factory' —
+#     the composition did not put it here
+#
+# The composition's purge DECLINED to remove one of its own declared members.
+# It vanished anyway, a moment later, because cortex was purged next and
+# `cascadeDependencyRemovals` swept it as an exclusively-owned dependency. The
+# end state is correct; the mechanism that produced it is an accident of
+# ordering, not the composition being reversible.
+#
+# WHY IT IS NOT NOTHING: change the ordering and the accident stops rescuing it.
+# An operator who installs cortex on its own first, then installs this factory,
+# gets the same `preexisting` stamp with cortex ALSO retained on its own
+# referent — and the adapter survives its own factory's purge for real. The
+# assertion stays in the harness so that day is loud rather than discovered.
+#
+# OWNER: arc — the declared-member/cascade-dependency overlap. Adjacent to
+# arc#410 (the cascade's unpinned members) but a distinct defect.
+A1.5
+
+# ─────────────────────────────────────────────────────────────────────────────
+# A5.8 — the epic's Definition of Done: an EMPTY post-purge filesystem diff.
+#
+# WHAT: 37 paths survive `arc purge software-factory`. Every one is itemised,
+# classified and attributed in scripts/known-residue.txt. The substantive half
+# is cortex's postinstall creating runtime directories and a relay policy file
+# that cortex's manifest does not declare under `owns:` — and arc only purges
+# what a package declares, so `untangle: CLEAN` is printed truthfully while all
+# of it is still on disk. arc names this failure mode itself
+# (docs/design-factory-type.md, arc#401 residual risk (c)).
+#
+# WHY IT IS WAIVED RATHER THAN GATING: A5.9 gates on the same data at per-path
+# granularity — anything surviving that is not in that reviewed baseline turns
+# the light red. So a regression is still caught; only the known gap is quiet.
+#
+# OWNER: cortex — declare the postinstall's directories under owns.state /
+# owns.config. See known-residue.txt Class 2 for the exact paths.
+A5.8
+
+# ─────────────────────────────────────────────────────────────────────────────
+# A6.3 — a launchctl call DOES reach the real login session. From the PURGE
+# path, which issue #3's containment note does not cover.
+#
+# THE OBSERVED CALL, timestamp-matched to the purge step (not the install):
+#
+#   launchctl bootout gui/501 <WORKDIR>/home/Library/LaunchAgents/ai.meta-factory.cortex.relay.plist
+#
+# Issue #3's comment argued the stub was belt-and-braces because a stackless
+# config dir means `discover_stack_slugs` finds nothing, so `render_stack_plist`
+# is never reached. THAT ARGUMENT IS CORRECT, and it held: the install phase
+# made no launchctl call at all, on every run.
+#
+# It is also incomplete, because it reasons only about the INSTALL path — and
+# #3 is the first work to actually exercise a purge. The call comes from
+# cortex's own `scripts.purge` hook (cortex#2338, "arc purge's non-declarable
+# cleanup"), in scripts/lib/purge-supervision.sh:
+#
+#   line 79:  launch_dir="${1:-${HOME}/Library/LaunchAgents}"   ← honours $HOME
+#   line 83:  domain="gui/$(id -u)"                             ← the REAL session
+#   line 87:  launchctl bootout "${domain}" "${plist}" ...
+#
+# Half of it is contained and half of it is not. The plist ENUMERATION respects
+# the redirected $HOME, so it finds only the hermetic relay plist — good. The
+# DOMAIN is `gui/<uid>`, the operator's live Aqua session, which no amount of
+# $HOME redirection touches. And `bootout <domain> <plist>` resolves the service
+# by the Label read out of that plist, not by where the file sits. The label in
+# cortex's relay plist is `ai.meta-factory.cortex.relay`, which on the machine
+# this was recorded on is a LIVE job (PID 1513, confirmed via `launchctl list`).
+#
+# So: without the stub first on PATH, purging this factory in a hermetic $HOME
+# would have unloaded the operator's running cortex relay.
+#
+# THE STUB IS LOAD-BEARING, NOT DEFENSIVE. Do not remove it, and do not soften
+# it to a warning. A6.1/A6.2 (real $HOME byte-identical, ecosystem job table
+# unchanged) are the evidence that it worked.
+#
+# WHY IT IS WAIVED RATHER THAN GATING: this exact call is expected, understood,
+# attributed, and absorbed. What must stay red is a call that is none of those
+# things — which is what A6.4 (un-waivable) and the A6.1/A6.2 pair cover.
+#
+# OWNER: cortex. The fix #3's comment proposes still applies, with a wider
+# scope than the comment gives it: a CORTEX_SKIP_SERVICE_RENDER (or
+# CORTEX_SKIP_SUPERVISION) escape hatch has to be honoured before EVERY
+# launchctl/systemctl call in the lifecycle scripts, not just before the
+# per-stack render. A narrower fix is available and worth considering on its
+# own: derive the bootout domain from the same root as the plist path, so a
+# redirected $HOME cannot address the real session at all.
+A6.3
