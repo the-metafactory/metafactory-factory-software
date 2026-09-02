@@ -20,7 +20,31 @@
 #   * A6.4 may never be listed here; the harness refuses to start if it is.
 #
 # Format: one assertion id per line. `#` comments, blank lines ignored.
-# Recorded 2026-09-02 against arc d5cda26 (#411), manifest at a74617e.
+#
+# Recorded 2026-09-02 against arc d5cda26 (#411); RE-VERIFIED the same day
+# against arc 7e3c17a, which is d5cda26 plus arc#412 (PR #416, "purge: survive
+# an unconstructible secret backend"). Manifest at a74617e.
+#
+# WHY THE FILE DID NOT SHRINK WHEN arc#412 LANDED, since that is the reasonable
+# expectation and it is wrong. arc#412 fixed the purge crash, and the crash was
+# taking SEVEN assertions down with it — A4.0, A4.1, A4.2, A5.1, A5.2, A5.7 and
+# A5.9. Every one of those was GATING. None was ever listed here; that is
+# exactly why the gate was red rather than green-with-waivers. They all pass
+# now, and the gate is green.
+#
+# The three entries below were measured against a locally-patched arc that
+# behaved the way arc#412 now makes main behave, so they were never downstream
+# of the crash and #412 could not have fixed them. Re-measured on 7e3c17a: all
+# three still fail. Removing any of them would not shrink the file honestly, it
+# would turn the default gate red.
+#
+# A6.3 deserves a specific note, because its history reads backwards. It PASSED
+# on d5cda26 — "no launchctl/systemctl call was attempted" — and fails now. That
+# is not a regression introduced by arc#412. The crash was aborting the cascade
+# before it reached cortex, so cortex's purge hook never ran and the call was
+# never made. The pre-#412 green was a false negative that the crash was
+# manufacturing. Fixing the purge let the cascade finish, which let the hook
+# run, which surfaced a defect that had been there all along.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # A1.5 — a declared member is recorded as `preexisting`, not `landed`.

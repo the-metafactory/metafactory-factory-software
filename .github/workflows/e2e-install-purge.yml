@@ -37,29 +37,23 @@ name: E2E install → purge
 # machine, behind the stub, which is exactly where you want to exercise it.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# THIS JOB IS RED TODAY, DELIBERATELY
+# WHAT GREEN MEANS HERE
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# Against arc `main` at d5cda26, `arc purge software-factory` throws:
-#
-#   error: invalid agent name "@the-metafactory/compass-core":
-#          expected a package-name slug ([A-Za-z0-9_][A-Za-z0-9_-]*)
-#     at assertAgentName (src/lib/secrets.ts:136)
-#     at new FileBackend (src/lib/secrets.ts:339)
-#     at clearSecrets  (src/commands/purge.ts:749)
-#     at purgeComposition (src/commands/purge.ts:462)
-#
-# Both secret backends validate the package name in their CONSTRUCTOR, and that
-# construction sits OUTSIDE the try/catch in clearSecrets, so a scoped member
-# name aborts the whole composition cascade and leaves the machine half-purged.
-# compass-core's manifest declares exactly such a name, deliberately (its own
-# header records it as a known arc/v1 violation left unfixed because renaming
-# would orphan every install on disk).
+# This job was red from the day it was written until arc#412 (PR #416) merged.
+# On arc `main` at d5cda26, `arc purge software-factory` threw inside a secret
+# backend constructor that sat outside its try/catch, aborting the cascade and
+# leaving seven of ten packages installed. This gate is what found it; arc#412
+# is the fix; the job has been green on stock arc `main` since.
 #
 # There is no `continue-on-error:` on this job and there will not be one. A gate
-# that reports green over a purge that crashes is worse than no gate. The job
-# goes green when arc is fixed, and the harness's own logs are the fix's
-# acceptance test.
+# that reports green over a purge that crashes is worse than no gate.
+#
+# Green here means NO REGRESSION, not "the epic is done". Three assertions are
+# still known-failing and waived in scripts/known-failures.txt, and the epic's
+# Definition of Done — an EMPTY post-purge diff — is one of them. Run this
+# workflow with `strict: true` to see the DoD govern the result; it is red today
+# on 37 surviving paths that cortex's manifest does not declare under `owns:`.
 #
 # ─────────────────────────────────────────────────────────────────────────────
 

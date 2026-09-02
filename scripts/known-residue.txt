@@ -18,8 +18,16 @@
 # `#` starts a comment; blank lines are ignored. Only ./.cache is excluded
 # ahead of this file (a cache is discardable by definition — see the harness).
 #
-# Recorded from a full five-member install/purge cycle, 2026-09-02, against
-# arc d5cda26 (#411) and this repo's arc-manifest.yaml at a74617e.
+# Recorded from a full five-member install/purge cycle, 2026-09-02, against this
+# repo's arc-manifest.yaml at a74617e.
+#
+# The 37 paths were first measured against arc d5cda26 (#411) plus a local patch
+# for the purge crash, because on unpatched d5cda26 the purge aborted part-way
+# and there was no complete cycle to measure. Since arc#412 (PR #416) merged,
+# the same 37 paths are measured on stock arc `main` at 7e3c17a with no patch of
+# any kind — a purge that runs to completion and reports `untangle: CLEAN`. The
+# number did not move, which is the useful part: this list describes what a
+# WORKING purge leaves behind, not what a broken one abandoned.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CLASS 1 — arc's own directory skeleton.

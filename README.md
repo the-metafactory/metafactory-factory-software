@@ -51,24 +51,26 @@ composition down in one command and prints a D6 untangle verdict saying what,
 if anything, it left behind.
 
 Measured end to end by this repo's own gate (see **Verifying it** below), on
-arc `main` at `d5cda26`, two things are true and both are worth knowing before
-you rely on it:
+stock arc `main` at `7e3c17a`:
 
-* **`arc purge software-factory` currently crashes**, aborting the cascade
-  part-way and leaving seven of the ten packages installed. It is a one-line
-  fault in arc, not in this manifest: both secret backends validate the package
-  name in their *constructor*, and that construction sits outside the
-  `try`/`catch` in `clearSecrets` (arc `src/commands/purge.ts:749`), so a member
-  whose manifest name is scoped — compass-core's
-  `@the-metafactory/compass-core`, which its own header records as a deliberate,
-  unfixed arc/v1 violation — throws and takes the whole purge with it.
-* **With that fixed, the purge is clean but not complete.** 37 paths survive,
-  every one itemised in [`scripts/known-residue.txt`](scripts/known-residue.txt).
-  The substantive half is cortex's postinstall creating runtime directories and
-  a relay policy file that cortex's manifest does not declare under `owns:` —
-  and arc only purges what a package declares, so `untangle: CLEAN` is printed
-  truthfully while all of it is still on disk. arc names this failure mode
-  itself, as arc#401 residual risk (c).
+* **The cascade completes and reports `untangle: CLEAN`.** All ten packages go
+  — the five declared members, cortex's four cascade dependencies, and the
+  composition record. `arc list` is empty afterwards.
+* **Clean is not the same as complete.** 37 paths survive, every one itemised
+  in [`scripts/known-residue.txt`](scripts/known-residue.txt). The substantive
+  half is cortex's postinstall creating runtime directories and a relay policy
+  file that cortex's manifest does not declare under `owns:` — and arc only
+  purges what a package declares, so `untangle: CLEAN` is printed truthfully
+  while all of it is still on disk. arc names this failure mode itself, as
+  arc#401 residual risk (c). That gap is the one thing standing between this
+  factory and the epic's Definition of Done.
+
+Until [arc#412](https://github.com/the-metafactory/arc/issues/412) merged, the
+purge crashed part-way through this composition and left seven of the ten
+packages installed — a scoped member name (compass-core's
+`@the-metafactory/compass-core`) threw inside a secret-backend constructor that
+sat outside the `try`/`catch`. This gate is what found it. It is fixed on arc
+`main`; no patch is needed to run any of the below.
 
 ## The idea
 
@@ -111,6 +113,19 @@ and is reported on every run whether or not it passes. Both files should only
 ever shrink; when they are empty, `--strict` goes green and that run is the
 epic's acceptance test passing. Until then, a green run means *nothing got
 worse*, not *the epic is done*, and the script says so.
+
+**Where that stands today**, on stock arc `main` at `7e3c17a`: the default gate
+is **green** — 26 assertions pass, 3 are known-waived. `--strict` is **red** on
+those same 3, and that is the honest reading, not a formality:
+
+| Assertion | Gap | Owner |
+|---|---|---|
+| `A5.8` | the DoD itself — 37 paths survive, per `known-residue.txt` | cortex (declare them under `owns:`) |
+| `A6.3` | purge calls `launchctl` against the real login session | cortex |
+| `A1.5` | a declared member is recorded `preexisting` on a fresh machine | arc |
+
+Closing `A5.8` is the epic's remaining work. Nothing here is blocked on arc any
+more.
 
 **The gate has been watched failing.** `--inject-residue` plants leftover state
 after the purge and requires the detectors to catch it; `--check-stub` proves
