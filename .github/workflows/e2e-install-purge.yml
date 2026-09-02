@@ -140,13 +140,20 @@ jobs:
       # and that includes a gate whose LAST observed failure was on a laptop
       # months ago. Residue is planted after the purge and the run must go red;
       # the script exits 0 only when it did.
+      #
+      # `if: always()` is not boilerplate. Without it these steps skip whenever
+      # the gate above is red — which is precisely the period this repo is in,
+      # and precisely when "are the detectors still working?" is the question
+      # worth answering. A skipped detector proof reads as a pass at a glance.
       - name: Fault-inject the detector (must observe RED)
+        if: always()
         run: ./scripts/e2e-install-purge.sh --inject-residue --workdir "${RUNNER_TEMP}/e2e-inject"
 
       # Same argument, applied to the launchctl stub — the one detector whose
       # healthy state is an EMPTY log, and therefore the one that could be
       # broken for months without anyone noticing.
       - name: Fault-inject the service-manager stub (must be intercepted)
+        if: always()
         run: ./scripts/e2e-install-purge.sh --check-stub --workdir "${RUNNER_TEMP}/e2e-stub"
 
       # Uploaded unconditionally: the run that FAILS is the one whose logs are
