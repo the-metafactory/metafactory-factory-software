@@ -166,7 +166,7 @@ install away").
 |---|---|---|
 | cortex | 6.13.3 | runtime |
 | metafactory-cortex-adapter-discord | 0.2.0 | surface |
-| compass-core | 0.6.0 | governance — SOPs (plan-breakdown, dev loop, code review) + skills |
+| compass-core | 0.6.1 | governance — SOPs (plan-breakdown, dev loop, code review) + skills |
 | discord (skill) | 0.5.0 | narration surface |
 | code-review (skill) | 0.4.2 | the review lane |
 
