@@ -334,16 +334,17 @@ references:
 
   # GOVERNANCE. Drops the governance + plan-breakdown skills and the
   # governance subagent into ~/.claude via `provides.files`.
-  # PIN CITED: release "compass-core v0.6.0 — the process installs with the
-  # factory", tagged v0.6.0, 2026-09-02 —
-  # https://github.com/the-metafactory/compass-core/releases/tag/v0.6.0
-  # Tag verified on the remote at `main` HEAD 0e42b1e ("feat: ship the
-  # plan-breakdown skill front-end with the SOP it fronts (#20) (#22)");
-  # arc-manifest.yaml at v0.6.0 declares `version: 0.6.0`, `type: governance`,
-  # `tier: official`. Confirmed at install: lands the Governance AND
-  # plan-breakdown skills plus the governance subagent via provides.files.
-  # (This tag was cut in response to this manifest; the pin never moved. See
-  # the header for why v0.4.3 was refused as a substitute.)
+  # PIN CITED: release "compass-core v0.6.1 — worktree placement is
+  # harness-aware", tagged v0.6.1, 2026-09-07 —
+  # https://github.com/the-metafactory/compass-core/releases/tag/v0.6.1
+  # (PR #24, closes #23 — the worktree SOP gains the Placement section, the
+  # one-way sibling probe, and the EnterWorktree rule for restricted
+  # sessions; field-reported by Vincent.) arc-manifest.yaml at v0.6.1
+  # declares `version: 0.6.1`, `type: governance`, `tier: official`.
+  # Previous pin: v0.6.0 (cut 2026-09-02 in response to this manifest —
+  # see the header for that history and why v0.4.3 was refused). Lands the
+  # Governance AND plan-breakdown skills plus the governance subagent via
+  # provides.files, now with the harness-aware worktree doctrine.
   #
   # SECOND, SEPARATE ISSUE, recorded so it is not rediscovered: compass-core's
   # manifest declares `name: "@the-metafactory/compass-core"`, a scoped string
@@ -354,7 +355,7 @@ references:
   # this file say `compass-core`. Harmless to the install — the label here is
   # only a label for a `repo:` member — but it is why the two names differ.
   - name: compass-core
-    version: 0.6.0
+    version: 0.6.1
     repo: https://github.com/the-metafactory/compass-core
 
   # NARRATION SURFACE. The `discord` CLI + skills bundle extracted from cortex
