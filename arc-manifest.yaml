@@ -334,17 +334,22 @@ references:
 
   # GOVERNANCE. Drops the governance + plan-breakdown skills and the
   # governance subagent into ~/.claude via `provides.files`.
-  # PIN CITED: release "compass-core v0.6.1 — worktree placement is
-  # harness-aware", tagged v0.6.1, 2026-09-07 —
-  # https://github.com/the-metafactory/compass-core/releases/tag/v0.6.1
-  # (PR #24, closes #23 — the worktree SOP gains the Placement section, the
-  # one-way sibling probe, and the EnterWorktree rule for restricted
-  # sessions; field-reported by Vincent.) arc-manifest.yaml at v0.6.1
-  # declares `version: 0.6.1`, `type: governance`, `tier: official`.
-  # Previous pin: v0.6.0 (cut 2026-09-02 in response to this manifest —
-  # see the header for that history and why v0.4.3 was refused). Lands the
-  # Governance AND plan-breakdown skills plus the governance subagent via
-  # provides.files, now with the harness-aware worktree doctrine.
+  # PIN CITED: release "compass-core v0.6.2 — the CI gate pins an engine
+  # that exists", tagged v0.6.2, 2026-09-12 —
+  # https://github.com/the-metafactory/compass-core/releases/tag/v0.6.2
+  # (PRs #26 + #28, close #25 — the installer's ENGINE_REF pointed at a
+  # commit older than the installer itself, so every consumer's rendered CI
+  # gate checked out an engine with no leak-check.ts; found on the website
+  # factory's first PR. Adds the engine-ref guard test and the release-time
+  # pin step in the versioning SOP.) arc-manifest.yaml at v0.6.2 declares
+  # `version: 0.6.2`, `type: governance`, `tier: official`.
+  # Previous pins: v0.6.1 (2026-09-07, PR #24 closes #23 — the worktree SOP
+  # gains the Placement section, the one-way sibling probe, and the
+  # EnterWorktree rule for restricted sessions; field-reported by Vincent);
+  # v0.6.0 (cut 2026-09-02 in response to this manifest — see the header for
+  # that history and why v0.4.3 was refused). Lands the Governance AND
+  # plan-breakdown skills plus the governance subagent via provides.files,
+  # with the harness-aware worktree doctrine.
   #
   # SECOND, SEPARATE ISSUE, recorded so it is not rediscovered: compass-core's
   # manifest declares `name: "@the-metafactory/compass-core"`, a scoped string
@@ -355,7 +360,7 @@ references:
   # this file say `compass-core`. Harmless to the install — the label here is
   # only a label for a `repo:` member — but it is why the two names differ.
   - name: compass-core
-    version: 0.6.1
+    version: 0.6.2
     repo: https://github.com/the-metafactory/compass-core
 
   # NARRATION SURFACE. The `discord` CLI + skills bundle extracted from cortex
